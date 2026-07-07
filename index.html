@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<!-- 모바일/패드에서 핀치줌·더블탭줌 방지 및 화면 맞춤 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>아기 오리 구출 대작전 (5-1 사회)</title>
+<style>
+  /* ===== 반응형 캔버스 (Aspect Ratio Letterboxing) =====
+     캔버스 내부(가상) 해상도는 800x600(4:3)으로 고정하고,
+     CSS로만 화면에 맞춰 비율 유지 스케일링한다.
+     남는 공간은 어두운 배경(레터박스)으로 채워진다. */
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #16324a;           /* 레터박스 색 */
+    overflow: hidden;              /* 스크롤 자체를 차단 */
+    overscroll-behavior: none;     /* 당겨서 새로고침 방지 */
+  }
+  #game-wrap {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game {
+    /* 4:3 비율을 유지하면서 화면(가로/세로 중 작은 쪽)에 꽉 차게 */
+    width:  min(100vw, calc(100vh * 4 / 3));
+    height: min(100vh, calc(100vw * 3 / 4));
+    display: block;
+    background: #7ec8e3;
+    touch-action: none;            /* 브라우저의 스크롤/줌 제스처 차단 */
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ===== 배경음악 컨트롤 =====
+     캔버스 밖 레터박스 여백(화면 모서리)에 떠 있는 작은 위젯.
+     재생/정지는 아이콘 하나로 토글해 공간을 아끼고, 옆의 슬라이더로 음량만 조절한다. */
+  #bgm-controls {
+    position: fixed;
+    top: 10px; left: 10px;
+    z-index: 1000;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(10, 30, 50, 0.6);
+    padding: 6px 12px 6px 6px;
+    border-radius: 22px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #bgm-toggle {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: none; background: #ffd21f; color: #5a3d00;
+    font-size: 16px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    flex: none; cursor: pointer; padding: 0;
+  }
+  #bgm-volume {
+    width: 72px; height: 20px; accent-color: #ffd21f; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="game-wrap"><canvas id="game"></canvas></div>
+
+<div id="bgm-controls">
+  <button id="bgm-toggle" type="button" aria-label="배경음악 재생·정지">▶</button>
+  <input id="bgm-volume" type="range" min="0" max="100" value="50" aria-label="배경음악 음량">
+</div>
+<audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
+
+<script>
+"use strict";
+
+/* ============================================================
+ * [1] 설정 변수 (Config) — 수정은 여기서만!
+ * ============================================================ */
+const CONFIG = {
+  // 화면(뷰포트)의 가상 해상도 (기기 화면 크기와 무관한 기준 좌표계)
+  W: 800,
+  H: 600,
+
+  // 전체 맵(월드) 크기 — 화면의 가로 2배 x 세로 2배 (화면 4개 넓이)
+  // 맵 끝과 끝은 이어져 있다(도넛 모양 벽 통과). 크기 조절은 여기서.
+  WORLD_W: 1600,
+  WORLD_H: 1200,
+
+  // 카메라 (엄마 오리를 부드럽게 따라다님)
+  CAMERA_FOLLOW: 6,       // 클수록 카메라가 빨리 따라붙음
+
+  // 엄마 오리
+  DUCK_RADIUS: 16,        // 엄마 오리 반지름 (가상 px)
+  DUCK_SPEED: 170,        // 기본 이동 속도 (가상 px / 초)
+  SPEED_PER_RESCUE: 4,    // 아기 오리 1마리 구출마다 속도 증가량
+  MAX_SPEED: 260,         // 최대 속도
+
+  // 아기 오리(꼬리)
+  DUCKLING_RADIUS: 10,    // 아기 오리 반지름
+  TAIL_SPACING: 34,       // 행렬 간격 (가상 px)
+  TAIL_SAFE_COUNT: 2,     // 머리 바로 뒤 몇 마리는 충돌 판정 제외(코너 오판 방지)
+
+  // 보기 상자
+  BOX_W: 96,
+  BOX_H: 58,
+  BOX_LABEL_FONT: 24,     // 상자 위 보기 글씨 크기 (패드 가독성 확보)
+  BOX_MIN_DIST_FROM_DUCK: 320, // 스폰 시 엄마 오리와의 최소 거리
+  BOX_MIN_DIST_BETWEEN: 360,   // 상자끼리의 최소 거리 (맵에 흩어지게)
+
+  // 오답 페널티
+  WRONG_PENALTY: 1,       // 오답 시 잃는 아기 오리 수
+
+  // 장애물 (시간이 지날수록 하나씩 추가됨: 바위 → 늑대 → 바위 → ...)
+  HAZARD_START_DELAY: 12, // 첫 장애물이 나타나는 시각 (초)
+  HAZARD_INTERVAL: 14,    // 이후 장애물 추가 간격 (초)
+  MAX_ROCKS: 5,           // 바위 최대 개수
+  MAX_WOLVES: 3,          // 늑대 최대 마리 수
+  ROCK_RADIUS: 26,        // 바위 반지름
+  WOLF_RADIUS: 17,        // 늑대 반지름
+  WOLF_SPEED: 105,        // 늑대 추격 속도 (오리보다 느려서 도망칠 수 있음)
+  HAZARD_MIN_DIST: 420,   // 장애물 스폰 시 오리와의 최소 거리
+  HIT_INVINCIBLE: 1.5,    // 장애물 피격 후 무적 시간 (초)
+  WOLF_WARN_DIST: 520,    // 화면 밖 늑대 경고 화살표를 띄우는 거리
+
+  // 화면 밖 안내 화살표
+  ARROW_EDGE_MARGIN: 52,  // 화살표가 화면 가장자리에서 떨어진 거리
+  ARROW_LABEL_FONT: 20,   // 화살표 옆 글씨 크기
+
+  // 상단 질문 UI 영역 높이 (질문이 길면 2줄로 표시)
+  UI_TOP: 100,
+
+  // 조작
+  SWIPE_THRESHOLD: 24,    // 스와이프 인식 최소 거리 (가상 px 기준 → 기기 무관 동일 감도)
+
+  // 피드백 텍스트
+  FEEDBACK_LIFE: 1.1,     // 떠 있는 시간(초)
+  LOST_DUCK_LIFE: 1.3,    // 잃은 아기 오리가 떠내려가며 사라지는 시간(초)
+};
+
+/* ============================================================
+ * [2] 단원별 문제 데이터 — 문제 수정/추가는 여기서만!
+ *     형식: [질문, 보기1, 보기2, 보기3, 정답 번호(0부터 시작)]
+ *     ※ 출제될 때마다 보기 순서가 자동으로 섞이므로,
+ *       여기의 정답 번호는 "정답 보기가 몇 번째에 적혀 있는지"만 뜻한다.
+ * ============================================================ */
+const UNITS = [
+  { name: "1단원", title: "우리나라의 지형과 독도", questions: [
+    ["우리 국토의 약 몇 %가 산지로 이루어져 있나요?", "50%", "60%", "70%", 2],
+    ["우리나라 지형은 전체적으로 어느 쪽이 높고 어느 쪽이 낮나요?", "북동쪽이 높고 남서쪽이 낮다", "남서쪽이 높고 북동쪽이 낮다", "서쪽이 높고 동쪽이 낮다", 0],
+    ["우리나라 대부분의 큰 하천은 지형의 영향으로 어느 방향으로 흐르나요?", "북쪽과 동쪽", "남쪽과 서쪽", "동쪽과 남쪽", 1],
+    ["산지, 하천, 해안 등 다양한 땅의 생김새를 무엇이라 하나요?", "기후", "지형", "영토", 1],
+    ["산지 지형에 대한 설명으로 옳은 것은?", "높이 솟은 산들이 모여 이룬 지형이다", "하천 주변에 발달한 평평한 땅이다", "바다와 육지가 맞닿은 곳이다", 0],
+    ["하천 하류 주변에 주로 발달하며 농경지로 이용되는 평평하고 넓은 땅은?", "산지", "평야", "해안", 1],
+    ["독도는 우리나라 영토의 어느 쪽 끝에 있나요?", "서쪽 끝", "동쪽 끝", "남쪽 끝", 1],
+    ["독도가 속해 있는 행정 구역은 어디인가요?", "강원특별자치도 울릉군", "경상북도 울릉군", "전라남도 신안군", 1],
+    ["독도는 울릉도에서 약 몇 km 떨어져 있나요?", "50.4km", "75.4km", "87.4km", 2],
+    ["독도를 이루는 두 개의 큰 섬은 무엇인가요?", "동도와 서도", "남도와 북도", "상도와 하도", 0],
+    ["독도 주변 바다 밑바닥에 묻혀 있는 천연가스 자원은?", "석탄", "석유", "가스 하이드레이트", 2],
+    ["가스 하이드레이트는 외형과 특징 때문에 무엇이라고도 불리나요?", "불타는 석유", "불타는 얼음", "차가운 가스", 1],
+    ["신라 지증왕 때 우산국을 정벌해 독도를 우리 영토로 만든 인물은?", "이사부", "안용복", "홍순칠", 0],
+    ["조선 시대에 일본으로 건너가 독도가 우리 땅임을 확인시킨 인물은?", "이사부", "안용복", "홍순칠", 1],
+    ["6·25 전쟁 직후 독도 의용 수비대를 결성해 독도를 지킨 인물은?", "안용복", "이사부", "홍순칠", 2],
+    ["1981년 독도로 주민 등록을 옮긴 최초의 독도 주민은?", "홍순칠", "안용복", "최종덕", 2],
+    ["우리나라가 독도의 생태계를 보호하고자 독도 전체를 지정한 것은?", "천연기념물", "국립공원", "유네스코 세계유산", 0],
+    ["독도 서도에서 가장 높은 봉우리의 이름은?", "대한봉", "우산봉", "탕건봉", 0],
+    ["독도 동도에서 가장 높은 봉우리의 이름은?", "대한봉", "우산봉", "탕건봉", 1],
+    ["독도에서 볼 수 있는 바위 중 독립문 모양을 닮은 바위는?", "독립문바위", "촛대바위", "코끼리바위", 0],
+    ["독도 바다 위로 솟은 모습이 촛대 모양을 닮은 바위는?", "독립문바위", "촛대바위", "코끼리바위", 1],
+    ["1900년 고종 황제가 독도를 울릉도의 부속 섬으로 명시해 발표한 법적 근거는?", "대한 제국 칙령 제41호", "세종실록지리지", "팔도총도", 0],
+    ["“날씨가 맑으면 서로 바라볼 수 있다”고 독도를 기록한 옛 문서는?", "대한 제국 칙령 제41호", "세종실록지리지", "팔도총도", 1],
+    ["우리나라 하천 하류 주변에 발달하며 농경지로 주로 이용되는 평평한 땅은?", "산지", "평야", "해안 절벽", 1],
+    ["서해안과 남해안에 갯벌이 잘 발달한 까닭으로 알맞은 것은?", "밀물과 썰물의 차이가 크고 수심이 얕아서", "파도가 매우 세고 수심이 깊어서", "해안선이 매우 단순해서", 0],
+    ["모래사장이 넓어 해수욕장이 발달한 동해안의 특징은?", "해안선이 복잡하다", "해안선이 단순하다", "섬이 아주 많다", 1],
+    ["국토 여행 계획서를 쓸 때 백지도를 받을 수 있는 곳은?", "국토지리정보원", "기상청", "경찰청", 0],
+    ["우리나라에서 가장 먼저 해가 뜨는 곳은?", "울릉도", "독도", "포항 호미곶", 1],
+    ["독도의 위치적 중요성으로 옳은 것은?", "영해의 경계를 결정하는 중요한 지점이다", "농사를 짓기 매우 좋다", "대륙의 정중앙에 있다", 0],
+    ["독도 영유권을 주장하기 위한 노력으로 틀린 것은?", "독도 홍보 콘텐츠 제작", "독도 역사 공부", "독도 방문 금지", 2],
+    ["산에서 흐르는 물이 모여 지표면을 흐르는 길은?", "해안", "하천", "평야", 1],
+    ["하천의 물은 지형의 영향으로 어느 방향으로 흐르나요?", "높은 곳에서 낮은 곳으로", "낮은 곳에서 높은 곳으로", "항상 북쪽에서 남쪽으로", 0],
+    ["우리나라 서해안의 특징은 무엇인가요?", "해안선이 단조롭다", "해안선이 복잡하다", "수심이 매우 깊다", 1],
+    ["우리나라 동해안의 특징으로 옳은 것은?", "해안선이 단조롭다", "갯벌이 매우 넓다", "섬이 아주 많다", 0],
+    ["하천 하류에 퇴적물이 쌓여 만들어진 넓은 땅은?", "산지", "하천", "평야", 2],
+    ["독도에서 볼 수 있는 대표적인 새는 무엇인가요?", "참새", "괭이갈매기", "독수리", 1],
+    ["독도에 대한 설명으로 틀린 것은?", "화산 활동으로 생겼다", "천연기념물이다", "자원이 전혀 없다", 2],
+    ["우리나라 지형의 특징인 '동고서저'가 하천의 흐름에 미치는 영향은?", "하천이 주로 서쪽과 남쪽으로 흐른다", "하천이 주로 동쪽으로 흐른다", "하천이 흐르지 않고 고여 있다", 0],
+    ["독도 주변 바다에 수산 자원이 풍부한 까닭은 무엇인가요?", "차가운 바닷물과 따뜻한 바닷물이 만나기 때문", "바닷물이 항상 일정하게 뜨겁기 때문", "파도가 치지 않기 때문", 0],
+    ["우리나라 삼면을 둘러싸고 있는 것은?", "산", "바다", "강", 1],
+    ["동해안에서 볼 수 있는 촛대 모양의 바위는?", "촛대바위", "고인돌", "돌하르방", 0],
+    ["독도를 지키기 위해 정부가 파견하여 머물게 하는 인력은?", "독도 경비대", "독도 관광 가이드", "울릉도 군수", 0],
+    ["독도가 우리 땅임을 증명하는 옛 기록 중, “두 섬이 거리가 멀지 않아 날씨가 맑으면 서로 바라볼 수 있다”고 기록된 문서는?", "세종실록지리지", "삼국사기", "대한 제국 칙령 제41호", 0],
+    ["국토 여행 시 경로를 표시할 때 주로 사용하는 기호는?", "점", "화살표", "원", 1],
+    ["하천 주변 넓은 들판(평야)에서 주로 하는 활동은?", "벌목", "농사", "등산", 1],
+    ["고종 황제가 대한 제국 칙령 제41호를 통해 독도를 울릉도의 부속 섬으로 명시한 것을 기념하여 매년 10월 25일로 지정된 날은?", "국토의 날", "독도의 날", "동해의 날", 1],
+    ["지형에 따른 생활 모습으로 틀린 것은?", "평야-농사", "해안-어업", "산지-대규모 논농사", 2],
+    ["독도가 소중한 까닭이 아닌 것은?", "우리 영토이기 때문", "자원이 풍부해서", "면적이 아시아에서 가장 넓어서", 2],
+    ["우리나라 큰 하천의 상류는 주로 어느 쪽에 있나요?", "동쪽(산지 쪽)", "서쪽", "남쪽", 0],
+    ["우리나라 지형은 북쪽과 동쪽이 높고 남쪽과 서쪽이 낮은데, 이러한 특징을 무엇이라고 하나요?", "남고북저", "동고서저", "동저서고", 1],
+  ]},
+  { name: "2단원", title: "우리나라의 기후와 인구", questions: [
+    ["오랜 기간 한 지역에서 나타나는 평균적이며 종합적인 대기 상태는?", "날씨", "기후", "기온", 1],
+    ["기후와 달리 짧은 시간 동안의 대기 상태를 무엇이라 하나요?", "날씨", "기후", "기온", 0],
+    ["우리나라의 기후 특징 중 대체로 온화하고 건조한 계절은?", "봄", "여름", "겨울", 0],
+    ["기온이 높고 강수량이 집중되며 남쪽 바다에서 습한 바람이 부는 계절은?", "봄", "여름", "겨울", 1],
+    ["춥고 건조하며 북쪽 육지에서 차가운 바람이 불어오는 계절은?", "봄", "여름", "겨울", 2],
+    ["중국이나 몽골에서 날아오는 미세한 모래 먼지는?", "황사", "태풍", "한파", 0],
+    ["여름철 짧은 시간 동안 특정 지역에 쏟아지는 비는?", "가뭄", "호우", "폭염", 1],
+    ["비가 오랫동안 오지 않아 물이 부족해지는 현상은?", "가뭄", "호우", "폭염", 0],
+    ["기온이 비정상적으로 높아져 발생하는 기상 재해는?", "황사", "폭염", "태풍", 1],
+    ["강한 바람과 비를 동반하며 주로 여름과 가을에 오는 것은?", "태풍", "한파", "가뭄", 0],
+    ["겨울철 기온이 갑자기 내려가 발생하는 재해는?", "폭염", "황사", "한파", 2],
+    ["지구 온난화로 인해 우리나라 연평균 기온은 어떻게 되고 있나요?", "꾸준히 올라감", "꾸준히 내려감", "변화 없음", 0],
+    ["기후변화로 인해 여름과 겨울의 길이는 각각 어떻게 변하고 있나요?", "여름 길어짐, 겨울 짧아짐", "여름 짧아짐, 겨울 길어짐", "변화 없음", 0],
+    ["재해가 예상될 때 국민에게 미리 알리는 정보는?", "기상 특보", "생활 수칙", "동시", 0],
+    ["일정한 지역에 사는 사람의 수를 무엇이라 하나요?", "인구 밀도", "인구", "인구 분포", 1],
+    ["인구가 모이거나 흩어져 있는 정도를 무엇이라 하나요?", "인구 밀도", "인구", "인구 분포", 2],
+    ["일정한 넓이(1㎢) 안에 사는 사람의 수로, 인구가 모인 정도를 나타내는 값은?", "인구 밀도", "인구", "인구 분포", 0],
+    ["우리나라에서 대체로 인구 밀도가 가장 높게 나타나는 지역은?", "산지 지역", "도시 지역", "농촌 지역", 1],
+    ["과거(농경 사회)에 사람들이 많이 살았던 지역의 특징은?", "기후가 온화하고 평야가 있는 곳", "춥고 험한 산지", "비가 안 오는 사막", 0],
+    ["1960년대 이후 인구가 이동한 주요 방향은?", "도시에서 촌락으로", "촌락에서 도시로", "남쪽에서 북쪽으로", 1],
+    ["1960년대 이후 도시로 사람들이 모인 주요 원인은?", "일자리와 학업", "깨끗한 공기", "넓은 농토", 0],
+    ["우리나라 인구의 약 절반이 모여 사는 지역은?", "수도권", "영남권", "호남권", 0],
+    ["수도권 인구 집중으로 인해 발생하는 문제가 아닌 것은?", "주택 부족", "교통 혼잡", "일손 부족", 2],
+    ["비수도권 지역이 인구 유출로 인해 겪는 주요 어려움은?", "일손 부족", "주택 부족", "교통 혼잡", 0],
+    ["수도권과 비수도권의 격차를 줄이고 국토가 골고루 발전하게 하는 것은?", "국가 균형 발전", "수도권 집중 개발", "인구 억제 정책", 0],
+    ["공공 기관의 이전을 계기로 지역의 성장을 돕는 미래형 도시는?", "신도시", "혁신 도시", "산업 도시", 1],
+    ["개인이 고향이나 다른 지역에 기부하여 지역 발전을 돕는 제도는?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 0],
+    ["지역의 자원과 문화 특성을 활용해 새로운 가치를 만드는 활동은?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 1],
+    ["지역 방문객을 늘리기 위해 관광객에게 발급하는 증은?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 2],
+    ["국가 균형 발전을 위해 정부가 추진하는 정책으로 알맞은 것은?", "공공 기관의 지방 이전", "수도권 아파트 추가 건설", "서울 지역 대학 정원 확대", 0],
+    ["수도권 인구를 분산하기 위한 근본적인 방법은?", "비수도권 활성화와 일자리 창출", "서울 아파트 증축", "지방 학교 폐쇄", 0],
+    ["우리나라 기후 특징에 따라 여름에 주로 입는 옷은?", "털옷", "반소매 옷", "두꺼운 잠바", 1],
+    ["우리나라 겨울철 생활 모습으로 옳은 것은?", "눈 치우기", "물놀이", "에어컨 켜기", 0],
+    ["인구가 도시로 집중되면서 도시에서 나타난 문제가 아닌 것은?", "교통 혼잡", "환경 오염", "일손 부족", 2],
+    ["기후변화로 인해 우리나라 자연재해에서 나타나는 특징은?", "자연재해의 강도가 세지고 예측이 어려워짐", "자연재해가 점점 사라짐", "발생 횟수가 꾸준히 줄어듦", 0],
+    ["봄철에 주로 발생하는 기상 재해는?", "황사", "홍수", "태풍", 0],
+    ["가뭄이 발생했을 때 나타나는 현상은?", "농작물이 마름", "집이 침수됨", "건물이 무너짐", 0],
+    ["태풍이 올 때 대비 방법은?", "외출 자제 및 시설물 고정", "산으로 올라가기", "바다낚시 가기", 0],
+    ["인구 분포 지도에서 점이 많이 찍힌 곳은 무엇을 의미하나요?", "인구가 많다", "인구가 적다", "땅이 넓다", 0],
+    ["비수도권 청년들이 수도권으로 떠나는 가장 큰 이유는?", "일자리와 학업", "집값이 싸서", "공기가 좋아서", 0],
+    ["혁신 도시를 만들면 기대되는 효과는?", "지역 일자리 창출", "수도권 집중 심화", "농사 면적 확대", 0],
+    ["우리나라 여름 기후의 특징은?", "무덥고 비가 많이 옴", "맑고 건조함", "춥고 눈 옴", 0],
+    ["우리나라 가을 기후의 특징은?", "무덥고 비가 많이 옴", "맑고 건조함", "춥고 눈 옴", 1],
+    ["장마는 어느 계절에 주로 나타나나요?", "봄", "여름", "겨울", 1],
+    ["폭설로 피해를 입는 계절은?", "봄", "가을", "겨울", 2],
+    ["인구 밀도가 높은 지역(도시)의 특징은?", "교통이 편리하고 편의 시설이 많다", "산이 아주 높다", "사람이 거의 없다", 0],
+    ["우리나라 연간 강수량의 절반 이상이 집중되는 계절은?", "봄", "여름", "가을", 1],
+    ["기후변화로 인해 우리나라에서 재배되는 작물의 변화는?", "열대 과일 재배 증가", "사과 재배 지역 남하", "변화 없음", 0],
+    ["우리나라 인구 분포의 불균형을 해결해야 하는 가장 중요한 이유는?", "국가 경쟁력을 높이고 국토를 균형 있게 발전시키기 위해", "도시 인구를 더 늘리기 위해", "시골을 모두 도시로 만들기 위해", 0],
+    ["학교에서 실천할 수 있는 기후 행동으로 알맞지 않은 것은?", "밥 남기지 않기", "빈 교실 전등 끄기", "종이 마음껏 쓰기", 2],
+  ]},
+  { name: "3단원", title: "법과 인권의 보장", questions: [
+    ["사회 구성원이 반드시 지켜야 하는 강제성이 있는 규범은?", "도덕", "법", "예절", 1],
+    ["양심에 따라 자율적으로 지키며 강제성이 없는 규범은?", "도덕", "법", "예절", 0],
+    ["법을 지키지 않았을 때 국가가 행하는 처벌이나 제한을 무엇이라 하나요?", "보상", "제재", "칭찬", 1],
+    ["법이 생긴 근본적인 이유는 무엇인가요?", "사회 질서 유지와 인권 보호", "사람들 괴롭히기", "세금 걷기", 0],
+    ["사람이 태어나면서 당연히 가지는 기본적인 권리는?", "인권", "투표권", "재산권", 0],
+    ["인권의 특징으로 옳은 것은?", "누구나 평등하게 누려야 한다", "어른만 가진다", "돈으로 살 수 있다", 0],
+    ["헌법에 담긴 내용이 아닌 것은?", "국민의 권리와 의무", "국가 운영 원칙", "어제 친구와 약속한 내용", 2],
+    ["도로에서 교통안전을 보호하기 위해 만든 법은?", "도로 교통법", "학교 급식법", "저작권법", 0],
+    ["학생들에게 영양가 있고 안전한 식사를 제공하기 위한 법은?", "도로 교통법", "학교 급식법", "저작권법", 1],
+    ["창작자의 사상이나 기술이 담긴 작품의 권리를 보호하는 법은?", "도로 교통법", "학교 급식법", "저작권법", 2],
+    ["인권 보호를 위해 국가가 운영하며 인권 침해 사례를 조사하는 독립 기관은?", "경제 위원회", "국가 인권 위원회", "교육 위원회", 1],
+    ["장애인, 노인 등이 시설 이용 시 불편함이 없도록 설계했는지 평가하는 제도는?", "장애물 없는 생활 환경 인증 제도", "교통안전 인증 제도", "급식 인증 제도", 0],
+    ["휠체어를 탄 사람이 건물에 쉽게 들어갈 수 있도록 설치하는 시설은?", "계단", "경사로", "에스컬레이터", 1],
+    ["시각 장애인이 안전하게 길을 찾을 수 있도록 바닥에 설치하는 것은?", "전등", "점자 블록", "스피커", 1],
+    ["법의 역할 중 개인 간의 다툼을 공정하게 해결하는 기준이 되는 과정은?", "재판", "선거", "기부", 0],
+    ["학교에서 인권 의식을 높이기 위해 학생들을 대상으로 실시하는 교육은?", "인권 교육", "시험 보기", "달리기 경주", 0],
+    ["인권을 침해하는 행동이 아닌 것은?", "친구 놀리기", "특정 종교 강요", "점자 블록 설치", 2],
+    ["헌법에 따라 국민이 정치에 참여할 수 있는 권리(선거권 등)는?", "참정권", "청구권", "사회권", 0],
+    ["권리가 침해되었을 때 국가에 일정한 해결을 요구할 수 있는 권리는?", "참정권", "청구권", "사회권", 1],
+    ["인간다운 생활을 보장받기 위해 국가에 요구할 수 있는 권리는?", "참정권", "청구권", "사회권", 2],
+    ["성별이나 종교에 따라 차별받지 않고 균등하게 대우받을 권리는?", "평등권", "자유권", "청구권", 0],
+    ["국가의 간섭 없이 자유롭게 생각하고 행동할 수 있는 권리는?", "평등권", "자유권", "청구권", 1],
+    ["일상생활 속 인권 침해 사례로 알맞은 것은?", "외국인이라는 이유로 월급을 적게 받는 경우", "안전벨트를 매는 경우", "분리수거를 하는 경우", 0],
+    ["인권 보호를 위해 우리가 가져야 할 태도는?", "상대방의 인권 존중과 공감", "나만 생각하기", "편견 가지기", 0],
+    ["인권 문제를 해결하기 위한 첫걸음은?", "문제 인지 및 원인 파악", "무조건 참기", "법 없애기", 0],
+    ["인권은 언제부터 가지게 되는 권리인가요?", "태어나는 순간부터", "어른이 된 후부터", "법을 배운 후부터", 0],
+    ["우리나라의 모든 법령 정보를 가장 정확하게 검색할 수 있는 누리집은?", "국가 법령 정보 센터", "기상청 누리집", "포털 블로그", 0],
+    ["인권 보호를 위해 국가가 마련한 제도로, 질병이나 빈곤 시 국민을 돕는 제도는?", "사회 보장 제도", "국가 고시 제도", "주민 등록 제도", 0],
+    ["임산부를 위해 지하철 등에 마련된 자리는?", "임산부 배려석", "노약자석", "우선 예약석", 0],
+    ["헌법에 국민의 기본권을 명시한 가장 큰 목적은 무엇인가요?", "인간으로서의 존엄과 가치를 지키기 위해", "벌금을 걷기 위해", "국가의 힘을 과시하기 위해", 0],
+    ["사회의 변화에 따라 새로운 법이 필요한 까닭은 무엇인가요?", "새로운 사회 문제를 해결하고 질서를 유지하기 위해", "법의 개수를 늘리기 위해", "사람들을 통제하기 위해", 0],
+    ["법을 지키는 '준법정신'이 필요한 이유는 무엇인가요?", "사회 구성원 모두의 권리와 안전을 보호하기 위해", "나만 이익을 얻기 위해", "처벌이 무서워서", 0],
+    ["'인권 감수성'을 높인다는 의미로 가장 적절한 설명은?", "일상 속 차별이나 인권 침해를 예민하게 느끼는 것", "감정이 풍부해지는 것", "그림을 잘 그리는 것", 0],
+    ["헌법이 다른 법보다 높은 지위를 가지는 까닭은 무엇인가요?", "국가 운영의 가장 기본적인 원칙을 담고 있기 때문", "가장 최근에 만들어졌기 때문", "내용이 가장 길기 때문", 0],
+    ["부당한 권력 남용으로부터 인권을 보호하는 국가 기관은?", "국가 인권 위원회", "국립 박물관", "기상청", 0],
+    ["국민의 기본권이 제한될 수 있는 상황은 언제인가요?", "국가 안전 보장이나 공공복리를 위해 필요한 경우", "공무원이 원할 때", "항상 아무 때나", 0],
+    ["학교 복도에서 질서를 위해 지켜야 할 규칙은?", "뛰기", "우측통행 및 천천히 걷기", "소리 지르기", 1],
+    ["다음 중 법이 반드시 필요한 상황은?", "상점에서 물건값을 내지 않고 가져가는 경우", "친구와 반갑게 인사하는 경우", "공원에서 산책하는 경우", 0],
+    ["인권 보호 실천 방법으로 옳은 것은?", "사이버 폭력 예방 캠페인 참여", "악플 달기", "친구 비밀 퍼뜨리기", 0],
+    ["인터넷에서 타인의 명예를 훼손하거나 거짓 정보를 퍼뜨리는 행위는?", "사이버 폭력", "인권 존중", "법 준수", 0],
+    ["화재나 재난으로부터 국민의 생명과 재산을 보호하기 위한 법은?", "소방 기본법", "도로 교통법", "학교 급식법", 0],
+    ["인권이 보호되지 않으면 어떤 삶을 살기 어렵나요?", "부유한 삶", "인간다운 삶", "바쁜 삶", 1],
+    ["생활 속 법의 역할 중 '개인의 권리 보호' 사례는?", "개인 정보 보호법에 따른 정보 관리", "투표 장려", "세금 부과", 0],
+    ["인권을 존중하는 문화를 만들기 위해 우리가 할 수 있는 일은?", "인권 보호 캠페인 참여 및 공감하기", "나쁜 행동 방관하기", "차별적인 말 사용하기", 0],
+    ["법을 지켰을 때의 사회적 장점은?", "사회적 갈등 예방과 안정된 생활", "갑자기 부자가 됨", "남들보다 우월해짐", 0],
+    ["개인의 생명과 재산을 보호하는 법의 기능은?", "개인의 자유와 권리 보장", "국가 간의 전쟁 유도", "질서 어지럽히기", 0],
+    ["누구나 능력에 따라 차별 없이 균등하게 교육받을 수 있는 권리는?", "교육을 받을 권리", "돈을 받을 권리", "칭찬을 받을 권리", 0],
+    ["인권 포스터를 만들 때 가장 강조해야 할 주제는?", "모든 사람의 존엄성과 평등", "시험 성적 올리기", "운동 열심히 하기", 0],
+    ["헌법 제11조 1항, 모든 국민은 법 앞에 무엇한가요?", "다르다", "평등하다", "자유롭지 않다", 1],
+    ["법과 인권을 공부하며 가져야 할 가장 중요한 마음가짐은?", "법 준수와 타인의 인권 존중", "법 무시", "나만의 이익 챙기기", 0],
+  ]},
+];
+
+/* ---- 문제 출제: 전체 단원에서 무작위 + 보기 순서도 매번 섞기 ---- */
+let currentQ = null;   // { unit, text, choices, answer }
+let lastPick = null;   // 직전 문제 기억 (같은 문제 연속 출제 방지)
+
+function shuffle3() {  // [0,1,2]를 무작위로 섞은 배열 (Fisher-Yates)
+  const a = [0, 1, 2];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function nextQuestion() {
+  let u, i, guard = 0;
+  do {
+    u = Math.floor(Math.random() * UNITS.length);
+    i = Math.floor(Math.random() * UNITS[u].questions.length);
+    guard++;
+  } while (guard < 10 && lastPick && lastPick.u === u && lastPick.i === i);
+  lastPick = { u, i };
+  const raw = UNITS[u].questions[i];
+  const order = shuffle3(); // 같은 문제라도 나올 때마다 보기 순서(=정답 위치)가 바뀐다
+  currentQ = {
+    unit: u,
+    text: raw[0],
+    choices: order.map(k => raw[1 + k]),
+    answer: order.indexOf(raw[4]),
+  };
+}
+
+/* ---- 단원별 정답률 (localStorage: 이 기기 브라우저에 계속 저장) ---- */
+const STATS_KEY = "duckRescueUnitStats_v1";
+
+function loadStats() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY)) || {}; }
+  catch (e) { return {}; }
+}
+let stats = loadStats();
+
+function recordAnswer(unitIdx, correct) {
+  const k = String(unitIdx);
+  if (!stats[k]) stats[k] = { c: 0, t: 0 };
+  stats[k].t++;
+  if (correct) stats[k].c++;
+  try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch (e) {}
+}
+
+function resetStats() {
+  stats = {};
+  try { localStorage.removeItem(STATS_KEY); } catch (e) {}
+}
+
+// "1단원 우리나라의 지형과 독도: 정답률 80% (16/20)" 형태 문자열
+function statText(unitIdx) {
+  const u = UNITS[unitIdx];
+  const s = stats[String(unitIdx)];
+  if (!s || s.t === 0) return `${u.name} ${u.title}: 아직 기록 없음`;
+  return `${u.name} ${u.title}: 정답률 ${Math.round(s.c / s.t * 100)}% (${s.c}/${s.t})`;
+}
+
+/* ============================================================
+ * [3] 캔버스 초기화 (고해상도 패드에서도 선명하게: DPR 스케일)
+ * ============================================================ */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width  = CONFIG.W * DPR;
+canvas.height = CONFIG.H * DPR;
+ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // 이후 모든 그리기는 가상 좌표(800x600) 기준
+
+const FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
+
+// 플레이 화면(질문 UI 아래 영역)의 중심 = 카메라가 비추는 곳
+const VIEW_CX = CONFIG.W / 2;
+const VIEW_CY = CONFIG.UI_TOP + (CONFIG.H - CONFIG.UI_TOP) / 2;
+
+/* ============================================================
+ * [4] 좌표 보정 — 화면 좌표 → 캔버스 가상 좌표
+ *     getBoundingClientRect()로 실제 표시 크기를 얻어
+ *     가상 해상도와의 비율로 환산한다. (레터박스/축소 화면 대응)
+ * ============================================================ */
+function toCanvasXY(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) * (CONFIG.W / rect.width),
+    y: (clientY - rect.top)  * (CONFIG.H / rect.height),
+  };
+}
+
+/* ============================================================
+ * [5] 월드 좌표 도우미 (도넛형 맵: 끝과 끝이 이어짐)
+ * ============================================================ */
+function mod(v, size) { return ((v % size) + size) % size; }
+
+// 두 지점의 차이를 "가장 가까운 방향"으로 계산 (맵 경계를 넘어가는 지름길 포함)
+function wrapDelta(d, size) {
+  return mod(d + size / 2, size) - size / 2;
+}
+
+// 월드 좌표 → 화면(가상 해상도) 좌표. 카메라 기준으로 가장 가까운 사본 위치를 반환.
+function worldToScreen(wx, wy) {
+  return {
+    x: VIEW_CX + wrapDelta(wx - cam.x, CONFIG.WORLD_W),
+    y: VIEW_CY + wrapDelta(wy - cam.y, CONFIG.WORLD_H),
+  };
+}
+
+// 월드 기준 두 점 사이 거리 (벽 통과 지름길 반영)
+function worldDist(x1, y1, x2, y2) {
+  return Math.hypot(wrapDelta(x1 - x2, CONFIG.WORLD_W), wrapDelta(y1 - y2, CONFIG.WORLD_H));
+}
+
+/* ============================================================
+ * [6] 게임 상태
+ * ============================================================ */
+let state = "start";   // "start" | "playing" | "gameover"
+let duck, dir, pendingDir, trail, rescued, boxes, feedbacks, speed;
+let cam = { x: 0, y: 0 };
+let rocks, wolves, gameTime, nextHazardAt, invulnUntil, gameOverReason;
+let lostDucks; // 잃어서 떠내려가는 아기 오리 연출용
+
+const BUTTONS = {
+  start:   { x: CONFIG.W/2 - 110, y: 468, w: 220, h: 62, label: "게임 시작" },
+  restart: { x: CONFIG.W/2 - 110, y: 412, w: 220, h: 66, label: "다시 시작" },
+  reset:   { x: 628, y: 544, w: 156, h: 42, label: "기록 초기화", small: true },
+};
+
+// 물 위 장식(잔물결·연잎) — 카메라가 움직이는 게 보이도록 월드에 고정 배치
+const DECOR = [];
+for (let i = 0; i < 48; i++) {
+  DECOR.push({
+    x: (i * 397 + 120) % CONFIG.WORLD_W,   // 서로소 곱셈으로 고르게 분산
+    y: (i * 641 + 90)  % CONFIG.WORLD_H,
+    lily: i % 6 === 0,                      // 6개 중 1개는 연잎
+    seed: i,
+  });
+}
+
+function initGame() {
+  duck = { x: CONFIG.WORLD_W / 2, y: CONFIG.WORLD_H / 2 };
+  cam = { x: duck.x, y: duck.y };
+  dir = { x: 1, y: 0 };
+  pendingDir = null;
+  trail = [];
+  rescued = 0;
+  nextQuestion();
+  feedbacks = [];
+  speed = CONFIG.DUCK_SPEED;
+  rocks = [];
+  wolves = [];
+  gameTime = 0;
+  nextHazardAt = CONFIG.HAZARD_START_DELAY;
+  invulnUntil = 0;
+  gameOverReason = "";
+  lostDucks = [];
+  spawnBoxes();
+}
+
+/* ============================================================
+ * [7] 스폰 — 보기 상자 / 장애물(바위·늑대)
+ * ============================================================ */
+// 오리·기존 물체들과 충분히 떨어진 무작위 월드 좌표 찾기
+function randomWorldPos(minDistFromDuck, avoidList, avoidDist) {
+  let x, y, tries = 0;
+  do {
+    x = Math.random() * CONFIG.WORLD_W;
+    y = Math.random() * CONFIG.WORLD_H;
+    tries++;
+  } while (
+    tries < 200 &&
+    ( worldDist(x, y, duck.x, duck.y) < minDistFromDuck ||
+      avoidList.some(o => worldDist(x, y, o.x, o.y) < avoidDist) )
+  );
+  return { x, y };
+}
+
+function spawnBoxes() {
+  boxes = [];
+  for (let i = 0; i < currentQ.choices.length; i++) {
+    // 다른 상자·바위와 겹치지 않는 자리에 배치
+    const avoid = boxes.map(b => ({ x: b.cx, y: b.cy })).concat(rocks || []);
+    const p = randomWorldPos(CONFIG.BOX_MIN_DIST_FROM_DUCK, avoid,
+      boxes.length ? CONFIG.BOX_MIN_DIST_BETWEEN : 170);
+    boxes.push({ cx: p.x, cy: p.y, w: CONFIG.BOX_W, h: CONFIG.BOX_H, choice: i });
+  }
+}
+
+// 시간이 지나면 바위 → 늑대 → 바위 → ... 순서로 하나씩 추가
+function spawnHazard() {
+  const total = rocks.length + wolves.length;
+  const wantWolf = total % 2 === 1; // 홀수 번째(2,4,...)는 늑대
+  const avoid = rocks.concat(boxes.map(b => ({ x: b.cx, y: b.cy })));
+  if (wantWolf && wolves.length < CONFIG.MAX_WOLVES) {
+    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 150);
+    wolves.push({ x: p.x, y: p.y, ang: 0 });
+    addFeedback("늑대가 나타났다!", VIEW_CX, VIEW_CY - 90, "#d63031");
+  } else if (rocks.length < CONFIG.MAX_ROCKS) {
+    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 180);
+    rocks.push({ x: p.x, y: p.y, r: CONFIG.ROCK_RADIUS });
+  } else if (wolves.length < CONFIG.MAX_WOLVES) {
+    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 150);
+    wolves.push({ x: p.x, y: p.y, ang: 0 });
+    addFeedback("늑대가 나타났다!", VIEW_CX, VIEW_CY - 90, "#d63031");
+  }
+}
+
+/* ============================================================
+ * [8] 입력 처리 — 키보드(PC) + 스와이프/드래그(패드·폰) + 버튼 터치
+ *     Pointer Events로 마우스/터치를 통합 처리하고,
+ *     touch 이벤트에는 preventDefault로 화면 스크롤 버그를 차단.
+ * ============================================================ */
+function setDir(nx, ny) {
+  pendingDir = { x: nx, y: ny }; // 실제 적용은 프레임당 1회(update)에서 역주행 검사 후
+}
+
+// 키보드 (방향키 + WASD)
+window.addEventListener("keydown", (e) => {
+  const map = {
+    ArrowUp: [0,-1], ArrowDown: [0,1], ArrowLeft: [-1,0], ArrowRight: [1,0],
+    w: [0,-1], s: [0,1], a: [-1,0], d: [1,0],
+  };
+  if (map[e.key]) {
+    e.preventDefault(); // 방향키로 페이지가 스크롤되는 것 방지
+    if (state === "playing") setDir(map[e.key][0], map[e.key][1]);
+  }
+  if ((e.key === "Enter" || e.key === " ") && state !== "playing") {
+    e.preventDefault();
+    startGame();
+  }
+});
+
+// 스와이프/드래그 (Pointer Events: 마우스+터치 공용)
+let swipe = { active: false, x: 0, y: 0 };
+
+canvas.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const p = toCanvasXY(e.clientX, e.clientY); // ★ 좌표 보정
+  if (state === "start") {
+    if (hitButton(BUTTONS.start, p)) startGame();
+    else if (hitButton(BUTTONS.reset, p)) resetStats(); // 단원별 기록 지우기
+    return;
+  }
+  if (state === "gameover") {
+    if (hitButton(BUTTONS.restart, p)) startGame();
+    return;
+  }
+  swipe = { active: true, x: p.x, y: p.y };
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!swipe.active || state !== "playing") return;
+  const p = toCanvasXY(e.clientX, e.clientY);
+  const dx = p.x - swipe.x, dy = p.y - swipe.y;
+  if (Math.hypot(dx, dy) >= CONFIG.SWIPE_THRESHOLD) {
+    if (Math.abs(dx) > Math.abs(dy)) setDir(Math.sign(dx), 0);
+    else                             setDir(0, Math.sign(dy));
+    // 기준점을 갱신 → 손을 떼지 않고 연속으로 방향 전환(드래그 조향) 가능
+    swipe.x = p.x; swipe.y = p.y;
+  }
+});
+
+["pointerup", "pointercancel"].forEach(t =>
+  canvas.addEventListener(t, () => { swipe.active = false; })
+);
+
+// 모바일 브라우저 고유의 스크롤/새로고침/줌 제스처 완전 차단
+["touchstart", "touchmove", "touchend"].forEach(t =>
+  canvas.addEventListener(t, (e) => e.preventDefault(), { passive: false })
+);
+
+function hitButton(b, p) {
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+}
+
+function startGame() {
+  initGame();
+  state = "playing";
+  playBgm(); // 버튼 클릭(사용자 제스처) 시점이라 브라우저 자동재생 차단에 걸리지 않는다
+}
+
+/* ============================================================
+ * [BGM] 배경음악 재생/정지 토글 + 음량 조절 (localStorage에 설정 저장)
+ * ============================================================ */
+const bgm = document.getElementById("bgm");
+const bgmToggle = document.getElementById("bgm-toggle");
+const bgmVolumeSlider = document.getElementById("bgm-volume");
+const BGM_VOLUME_KEY = "duckRescueBgmVolume_v1";
+let bgmUserPaused = false; // 사용자가 직접 정지 버튼을 눌렀는지 (자동재생 재시도와 구분)
+
+(function initBgm() {
+  let vol = 50;
+  try {
+    const saved = localStorage.getItem(BGM_VOLUME_KEY);
+    if (saved !== null) vol = Math.max(0, Math.min(100, Number(saved)));
+  } catch (e) {}
+  bgmVolumeSlider.value = vol;
+  bgm.volume = vol / 100;
+})();
+
+function playBgm() {
+  if (bgmUserPaused) return; // 사용자가 일부러 꺼둔 상태면 자동으로 다시 켜지 않음
+  bgm.play().catch(() => {}); // 자동재생이 막혀도 조용히 무시 (토글 버튼으로 재생 가능)
+}
+
+function updateBgmToggleIcon() {
+  bgmToggle.textContent = bgm.paused ? "▶" : "⏸";
+}
+
+bgmToggle.addEventListener("click", () => {
+  if (bgm.paused) { bgmUserPaused = false; bgm.play().catch(() => {}); }
+  else            { bgmUserPaused = true;  bgm.pause(); }
+});
+bgm.addEventListener("play", updateBgmToggleIcon);
+bgm.addEventListener("pause", updateBgmToggleIcon);
+
+bgmVolumeSlider.addEventListener("input", () => {
+  const v = Number(bgmVolumeSlider.value);
+  bgm.volume = v / 100;
+  try { localStorage.setItem(BGM_VOLUME_KEY, String(v)); } catch (e) {}
+});
+
+// 첫 화면에서도 아무 키/터치나 누르면 바로 배경음악이 흐르도록 (시작 버튼 전에도 대응)
+window.addEventListener("keydown", () => playBgm(), { once: true });
+canvas.addEventListener("pointerdown", () => playBgm(), { once: true });
+
+/* ============================================================
+ * [9] 게임 로직 업데이트
+ * ============================================================ */
+function update(dt) {
+  gameTime += dt;
+
+  // 시간 경과에 따른 장애물 추가
+  if (gameTime >= nextHazardAt) {
+    spawnHazard();
+    nextHazardAt += CONFIG.HAZARD_INTERVAL;
+  }
+
+  // 방향 적용 (역주행 = 즉시 자기 꼬리 충돌이므로 금지)
+  if (pendingDir) {
+    if (!(pendingDir.x === -dir.x && pendingDir.y === -dir.y)) dir = pendingDir;
+    pendingDir = null;
+  }
+
+  // 이동 (속도는 가상 해상도 기준 px/초 → 어떤 기기든 동일한 난이도)
+  const step = speed * dt;
+  duck.x = mod(duck.x + dir.x * step, CONFIG.WORLD_W); // 맵 끝 → 반대편 (벽 통과)
+  duck.y = mod(duck.y + dir.y * step, CONFIG.WORLD_H);
+
+  // 카메라가 오리를 부드럽게 추적 (벽 통과 시에도 자연스럽게)
+  const k = Math.min(1, CONFIG.CAMERA_FOLLOW * dt);
+  cam.x = mod(cam.x + wrapDelta(duck.x - cam.x, CONFIG.WORLD_W) * k, CONFIG.WORLD_W);
+  cam.y = mod(cam.y + wrapDelta(duck.y - cam.y, CONFIG.WORLD_H) * k, CONFIG.WORLD_H);
+
+  // 늑대: 엄마 오리를 향해 추격 (지름길 방향)
+  for (const w of wolves) {
+    const dx = wrapDelta(duck.x - w.x, CONFIG.WORLD_W);
+    const dy = wrapDelta(duck.y - w.y, CONFIG.WORLD_H);
+    const d = Math.hypot(dx, dy) || 1;
+    w.ang = Math.atan2(dy, dx);
+    w.x = mod(w.x + (dx / d) * CONFIG.WOLF_SPEED * dt, CONFIG.WORLD_W);
+    w.y = mod(w.y + (dy / d) * CONFIG.WOLF_SPEED * dt, CONFIG.WORLD_H);
+  }
+
+  // 이동 궤적 기록 (아기 오리들이 이 길을 따라온다)
+  trail.unshift({ x: duck.x, y: duck.y, d: step });
+  // 필요한 길이만 남기고 잘라내기 (메모리 절약)
+  const need = CONFIG.TAIL_SPACING * (rescued + 2);
+  let acc = 0;
+  for (let i = 0; i < trail.length; i++) {
+    acc += trail[i].d;
+    if (acc > need) { trail.length = i + 1; break; }
+  }
+
+  // 아기 오리 위치 계산
+  const tailPos = computeTailPositions();
+  const duckScreen = worldToScreen(duck.x, duck.y);
+
+  // ----- 보기 상자 충돌 판정 (벽 통과 지름길 거리 기준) -----
+  for (const b of boxes) {
+    const dx = wrapDelta(b.cx - duck.x, CONFIG.WORLD_W); // 오리 기준 상대 위치
+    const dy = wrapDelta(b.cy - duck.y, CONFIG.WORLD_H);
+    if (circleRectHit(0, 0, CONFIG.DUCK_RADIUS, { x: dx - b.w/2, y: dy - b.h/2, w: b.w, h: b.h })) {
+      if (b.choice === currentQ.answer) {
+        recordAnswer(currentQ.unit, true); // 단원별 정답률 기록
+        rescued++;
+        speed = Math.min(CONFIG.MAX_SPEED, CONFIG.DUCK_SPEED + rescued * CONFIG.SPEED_PER_RESCUE);
+        addFeedback("+1 구출!", duckScreen.x, duckScreen.y - 34, "#1a9e3f");
+      } else {
+        recordAnswer(currentQ.unit, false);
+        // 오답 페널티: 아기 오리를 잃는다 (0마리면 잃을 게 없어 점수만 유지)
+        let lost = 0;
+        for (let i = 0; i < CONFIG.WRONG_PENALTY; i++) { if (loseDuckling()) lost++; }
+        if (lost > 0) addFeedback(`틀렸어! 아기 오리 -${lost}`, duckScreen.x, duckScreen.y - 34, "#d63031");
+        else          addFeedback("틀렸어!", duckScreen.x, duckScreen.y - 34, "#d63031");
+      }
+      nextQuestion(); // 정답이든 오답이든 즉시 다음 문제로 (무작위 + 보기 섞기)
+      spawnBoxes();
+      break;
+    }
+  }
+
+  // ----- 장애물 충돌 (피격 후 잠깐 무적) -----
+  if (gameTime >= invulnUntil) {
+    // 바위
+    for (const r of rocks) {
+      if (worldDist(duck.x, duck.y, r.x, r.y) < CONFIG.DUCK_RADIUS + r.r - 4) {
+        hitHazard("쿵! 아기 오리 -1", "바위에 부딪혔어요...", duckScreen);
+        break;
+      }
+    }
+  }
+  if (state === "playing" && gameTime >= invulnUntil) {
+    // 늑대
+    for (const w of wolves) {
+      if (worldDist(duck.x, duck.y, w.x, w.y) < CONFIG.DUCK_RADIUS + CONFIG.WOLF_RADIUS - 2) {
+        const survived = hitHazard("늑대가 물어갔어! -1", "늑대에게 잡혔어요...", duckScreen);
+        if (survived) {
+          // 아기 오리를 물고 멀리 달아났다가 다른 곳에서 다시 등장
+          const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, rocks, 150);
+          w.x = p.x; w.y = p.y;
+        }
+        break;
+      }
+    }
+  }
+
+  // ----- 자기 꼬리(아기 오리 행렬) 충돌 → 게임 오버 -----
+  for (let i = CONFIG.TAIL_SAFE_COUNT; i < tailPos.length; i++) {
+    const t = tailPos[i];
+    if (worldDist(duck.x, duck.y, t.x, t.y) < CONFIG.DUCK_RADIUS + CONFIG.DUCKLING_RADIUS - 4) {
+      gameOverReason = "아기 오리 행렬에 부딪혔어요.";
+      state = "gameover";
+      break;
+    }
+  }
+}
+
+// 장애물 피격 공통 처리. 아기 오리가 있으면 1마리 잃고 무적, 없으면 게임 오버.
+// 살아남았으면 true를 반환.
+function hitHazard(lossText, overReason, duckScreen) {
+  if (loseDuckling()) {
+    invulnUntil = gameTime + CONFIG.HIT_INVINCIBLE;
+    addFeedback(lossText, duckScreen.x, duckScreen.y - 34, "#d63031");
+    return true;
+  }
+  gameOverReason = overReason;
+  state = "gameover";
+  return false;
+}
+
+// 행렬 맨 끝의 아기 오리 1마리를 잃는다. 그 자리에서 떠내려가는 연출을 남긴다.
+// 잃을 오리가 없으면 false.
+function loseDuckling() {
+  if (rescued <= 0) return false;
+  const tp = computeTailPositions();
+  const lastPos = tp[tp.length - 1] || duck;
+  rescued--;
+  lostDucks.push({ x: lastPos.x, y: lastPos.y, age: 0 });
+  return true;
+}
+
+// 궤적을 따라 TAIL_SPACING 간격으로 아기 오리들을 배치
+function computeTailPositions() {
+  const pos = [];
+  let target = CONFIG.TAIL_SPACING;
+  let acc = 0;
+  for (let i = 0; i < trail.length && pos.length < rescued; i++) {
+    acc += trail[i].d;
+    while (acc >= target && pos.length < rescued) {
+      pos.push({ x: trail[i].x, y: trail[i].y });
+      target += CONFIG.TAIL_SPACING;
+    }
+  }
+  // 궤적이 아직 짧으면(방금 구출) 맨 끝에 겹쳐 두었다가 자연스럽게 풀려나온다
+  while (pos.length < rescued) {
+    const last = trail.length ? trail[trail.length - 1] : duck;
+    pos.push({ x: last.x, y: last.y });
+  }
+  return pos;
+}
+
+function circleRectHit(cx, cy, r, b) {
+  const nx = Math.max(b.x, Math.min(cx, b.x + b.w));
+  const ny = Math.max(b.y, Math.min(cy, b.y + b.h));
+  return (cx - nx) ** 2 + (cy - ny) ** 2 <= r * r;
+}
+
+/* ============================================================
+ * [10] 실시간 피드백 텍스트 — 화면 좌표 기준
+ * ============================================================ */
+function addFeedback(text, x, y, color) {
+  // 화면 밖으로 잘리지 않게 위치 보정
+  x = Math.max(120, Math.min(CONFIG.W - 120, x));
+  y = Math.max(CONFIG.UI_TOP + 50, Math.min(CONFIG.H - 30, y));
+  feedbacks.push({ text, x, y, color, age: 0 });
+}
+
+function updateFeedbacks(dt) {
+  for (const f of feedbacks) { f.age += dt; f.y -= 45 * dt; }
+  feedbacks = feedbacks.filter(f => f.age < CONFIG.FEEDBACK_LIFE);
+  for (const l of lostDucks) l.age += dt;
+  lostDucks = lostDucks.filter(l => l.age < CONFIG.LOST_DUCK_LIFE);
+}
+
+/* ============================================================
+ * [11] 그리기 (외부 이미지 없이 Canvas 기본 도형만 사용)
+ * ============================================================ */
+function render(time) {
+  drawWater(time);
+
+  if (state === "start") { drawStartScreen(); return; }
+
+  const q = currentQ;
+
+  // ----- 바위 -----
+  for (const r of rocks) {
+    const s = worldToScreen(r.x, r.y);
+    if (s.x > -50 && s.x < CONFIG.W + 50 && s.y > CONFIG.UI_TOP - 50 && s.y < CONFIG.H + 50) {
+      drawRock(s.x, s.y, r.r);
+    }
+  }
+
+  // ----- 보기 상자 (화면 안: 상자 그리기 / 화면 밖: 가장자리 화살표) -----
+  for (const b of boxes) {
+    const s = worldToScreen(b.cx, b.cy);
+    const onScreen =
+      s.x > -b.w && s.x < CONFIG.W + b.w &&
+      s.y > CONFIG.UI_TOP - 20 && s.y < CONFIG.H + b.h;
+    if (onScreen) drawBox(b, s, q.choices[b.choice]);
+    else          drawEdgeArrow(s, q.choices[b.choice], time, "#ff8c00");
+  }
+
+  // ----- 늑대 (화면 밖이라도 가까이 오면 빨간 경고 화살표) -----
+  for (const w of wolves) {
+    const s = worldToScreen(w.x, w.y);
+    const onScreen =
+      s.x > -40 && s.x < CONFIG.W + 40 &&
+      s.y > CONFIG.UI_TOP - 40 && s.y < CONFIG.H + 40;
+    if (onScreen) drawWolf(s.x, s.y, CONFIG.WOLF_RADIUS, w.ang, time);
+    else if (worldDist(duck.x, duck.y, w.x, w.y) < CONFIG.WOLF_WARN_DIST) {
+      drawEdgeArrow(s, "늑대!", time, "#e03131");
+    }
+  }
+
+  // ----- 아기 오리 행렬 -----
+  const tailPos = computeTailPositions();
+  for (let i = tailPos.length - 1; i >= 0; i--) {
+    const t = tailPos[i];
+    const ahead = i === 0 ? duck : tailPos[i - 1];
+    const ang = Math.atan2(
+      wrapDelta(ahead.y - t.y, CONFIG.WORLD_H),
+      wrapDelta(ahead.x - t.x, CONFIG.WORLD_W)
+    );
+    const s = worldToScreen(t.x, t.y);
+    const bob = Math.sin(time * 5 + i) * 2; // 둥실둥실
+    drawDuckShape(s.x, s.y + bob, CONFIG.DUCKLING_RADIUS, "#ffe9a8", ang);
+  }
+
+  // ----- 잃은 아기 오리 (빙글빙글 떠내려가며 사라짐) -----
+  for (const l of lostDucks) {
+    const s = worldToScreen(l.x, l.y);
+    const a = 1 - l.age / CONFIG.LOST_DUCK_LIFE;
+    ctx.globalAlpha = Math.max(0, a) * 0.9;
+    drawDuckShape(
+      s.x + Math.sin(l.age * 6) * 8,     // 좌우로 흔들흔들
+      s.y + l.age * 28,                  // 아래로 떠내려감
+      CONFIG.DUCKLING_RADIUS,
+      "#ffe9a8",
+      l.age * 5                          // 빙글빙글 회전
+    );
+    ctx.globalAlpha = 1;
+  }
+
+  // ----- 엄마 오리 (피격 무적 중에는 깜빡깜빡) -----
+  const ds = worldToScreen(duck.x, duck.y);
+  const invincible = state === "playing" && gameTime < invulnUntil;
+  if (!invincible || Math.floor(time * 8) % 2 === 0) {
+    ctx.globalAlpha = invincible ? 0.6 : 1;
+    drawDuckShape(ds.x, ds.y, CONFIG.DUCK_RADIUS, "#ffd21f", Math.atan2(dir.y, dir.x));
+    ctx.globalAlpha = 1;
+  }
+
+  // ----- 피드백 텍스트 -----
+  for (const f of feedbacks) {
+    const a = 1 - f.age / CONFIG.FEEDBACK_LIFE;
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.font = `bold 34px ${FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineWidth = 6; ctx.strokeStyle = "#ffffff";
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.globalAlpha = 1;
+  }
+
+  // ----- 상단 질문 UI -----
+  drawTopBar(q);
+
+  if (state === "gameover") drawGameOverScreen();
+}
+
+function drawWater(time) {
+  ctx.fillStyle = "#7ec8e3";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.H);
+  // 월드에 고정된 잔물결·연잎 (카메라 이동이 눈에 보이게 하는 기준점)
+  for (const d of DECOR) {
+    const s = worldToScreen(d.x, d.y);
+    if (s.x < -30 || s.x > CONFIG.W + 30 || s.y < -30 || s.y > CONFIG.H + 30) continue;
+    if (d.lily) {
+      // 연잎
+      ctx.fillStyle = "#5aa25e";
+      ctx.beginPath(); ctx.arc(s.x, s.y, 20, 0.25, Math.PI * 2 - 0.25); ctx.lineTo(s.x, s.y); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "rgba(30,80,40,0.5)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 20, 0.25, Math.PI * 2 - 0.25); ctx.stroke();
+    } else {
+      // 잔물결
+      const ph = Math.sin(time * 1.5 + d.seed) * 4;
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y + ph, 14, Math.PI * 0.15, Math.PI * 0.85);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawBox(b, s, label) {
+  const x = s.x - b.w / 2, y = s.y - b.h / 2;
+  // 상자 본체
+  ctx.fillStyle = "#b07a3c";
+  roundRect(x, y, b.w, b.h, 8); ctx.fill();
+  ctx.strokeStyle = "#7a5023"; ctx.lineWidth = 3;
+  roundRect(x, y, b.w, b.h, 8); ctx.stroke();
+  // 리본
+  ctx.fillStyle = "#7a5023";
+  ctx.fillRect(x + b.w/2 - 5, y, 10, b.h);
+  ctx.fillRect(x, y + b.h/2 - 5, b.w, 10);
+  // 보기 글씨 (상자 위, 흰 테두리로 가독성 확보. 길면 자동 축소)
+  fitFontSize(label, CONFIG.BOX_LABEL_FONT, 360, 15);
+  const half = ctx.measureText(label).width / 2 + 6;
+  const lx = Math.max(half, Math.min(CONFIG.W - half, s.x)); // 화면 밖으로 잘리지 않게
+  const ly = Math.max(CONFIG.UI_TOP + 30, y - 8);            // 상단 UI에 가려지지 않게
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  ctx.lineWidth = 5; ctx.strokeStyle = "#ffffff";
+  ctx.strokeText(label, lx, ly);
+  ctx.fillStyle = "#233b52";
+  ctx.fillText(label, lx, ly);
+}
+
+function drawRock(x, y, r) {
+  ctx.fillStyle = "#8d99ae";
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#5c6672"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+  // 밝은 면 (입체감)
+  ctx.fillStyle = "#aab4c4";
+  ctx.beginPath(); ctx.arc(x - r * 0.28, y - r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill();
+  // 갈라진 금
+  ctx.strokeStyle = "rgba(60,70,85,0.6)"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.1, y - r * 0.7);
+  ctx.lineTo(x + r * 0.2, y - r * 0.1);
+  ctx.lineTo(x - r * 0.15, y + r * 0.5);
+  ctx.stroke();
+}
+
+function drawWolf(x, y, r, angle, time) {
+  const lunge = Math.sin(time * 8) * 1.5; // 성큼성큼 달리는 느낌
+  ctx.save();
+  ctx.translate(x + Math.cos(angle) * lunge, y + Math.sin(angle) * lunge);
+  ctx.rotate(angle);
+  // 귀 (몸통 뒤에 먼저)
+  ctx.fillStyle = "#4b5563";
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.55, -r * 0.5); ctx.lineTo(-r * 0.25, -r * 1.5); ctx.lineTo(r * 0.05, -r * 0.55);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.55, r * 0.5); ctx.lineTo(-r * 0.25, r * 1.5); ctx.lineTo(r * 0.05, r * 0.55);
+  ctx.closePath(); ctx.fill();
+  // 몸통
+  ctx.fillStyle = "#6b7280";
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#374151"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+  // 주둥이
+  ctx.fillStyle = "#9ca3af";
+  ctx.beginPath(); ctx.arc(r * 0.62, 0, r * 0.42, 0, Math.PI * 2); ctx.fill();
+  // 코
+  ctx.fillStyle = "#1f2937";
+  ctx.beginPath(); ctx.arc(r * 0.98, 0, r * 0.16, 0, Math.PI * 2); ctx.fill();
+  // 눈 (양쪽)
+  ctx.fillStyle = "#fbbf24";
+  ctx.beginPath(); ctx.arc(r * 0.2, -r * 0.42, r * 0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r * 0.2,  r * 0.42, r * 0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#111";
+  ctx.beginPath(); ctx.arc(r * 0.28, -r * 0.42, r * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r * 0.28,  r * 0.42, r * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+/* 화면 밖 대상 안내: 가장자리에 화살표 + 라벨 표시 (상자=주황, 늑대=빨강) */
+function drawEdgeArrow(s, label, time, color) {
+  const dx = s.x - VIEW_CX, dy = s.y - VIEW_CY;
+  if (dx === 0 && dy === 0) return;
+  // 화면 안쪽 경계 사각형과 (화면중심→대상) 방향선의 교점 찾기
+  const m = CONFIG.ARROW_EDGE_MARGIN;
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (CONFIG.W - m - VIEW_CX) / dx);
+  if (dx < 0) t = Math.min(t, (m - VIEW_CX) / dx);
+  if (dy > 0) t = Math.min(t, (CONFIG.H - m - VIEW_CY) / dy);
+  if (dy < 0) t = Math.min(t, (CONFIG.UI_TOP + m - VIEW_CY) / dy);
+  if (!isFinite(t) || t <= 0) return;
+  const ax = VIEW_CX + dx * t;
+  const ay = VIEW_CY + dy * t;
+  const ang = Math.atan2(dy, dx);
+  const pulse = 1 + Math.sin(time * 6) * 0.12; // 콩닥콩닥 강조
+
+  // 화살표 (삼각형)
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(ang);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(18, 0);
+  ctx.lineTo(-12, -13);
+  ctx.lineTo(-5, 0);
+  ctx.lineTo(-12, 13);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+
+  // 라벨 (화살표에서 화면 안쪽으로 살짝 들어온 위치, 알약 배경. 길면 자동 축소)
+  fitFontSize(label, CONFIG.ARROW_LABEL_FONT, 300, 13);
+  const tw = ctx.measureText(label).width;
+  const pillW = tw + 22, pillH = 30;
+  let lx = ax - Math.cos(ang) * (pillW / 2 + 30);
+  let ly = ay - Math.sin(ang) * (pillH / 2 + 26);
+  lx = Math.max(pillW / 2 + 6, Math.min(CONFIG.W - pillW / 2 - 6, lx));
+  ly = Math.max(CONFIG.UI_TOP + pillH / 2 + 6, Math.min(CONFIG.H - pillH / 2 - 6, ly));
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  roundRect(lx - pillW / 2, ly - pillH / 2, pillW, pillH, 15); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  roundRect(lx - pillW / 2, ly - pillH / 2, pillW, pillH, 15); ctx.stroke();
+  ctx.fillStyle = "#233b52";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(label, lx, ly + 1);
+}
+
+function drawDuckShape(x, y, r, bodyColor, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // 몸통
+  ctx.fillStyle = bodyColor;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(120,80,0,0.4)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+  // 부리 (진행 방향)
+  ctx.fillStyle = "#f5820b";
+  ctx.beginPath();
+  ctx.moveTo(r * 0.55, -r * 0.35);
+  ctx.lineTo(r * 1.55, 0);
+  ctx.lineTo(r * 0.55, r * 0.35);
+  ctx.closePath(); ctx.fill();
+  // 눈
+  ctx.fillStyle = "#222";
+  ctx.beginPath(); ctx.arc(r * 0.3, -r * 0.4, Math.max(2, r * 0.16), 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawTopBar(q) {
+  ctx.fillStyle = "rgba(22,50,74,0.92)";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.UI_TOP);
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillRect(0, CONFIG.UI_TOP - 4, CONFIG.W, 4);
+
+  // 질문 (길면 자동으로 2줄 + 글씨 축소)
+  drawQuestionText(q.text);
+
+  // 하단 정보줄: 왼쪽 = 현재 단원·누적 정답률, 오른쪽 = 구출 수
+  const u = UNITS[q.unit];
+  const s = stats[String(q.unit)];
+  const pct = s && s.t > 0 ? `정답률 ${Math.round(s.c / s.t * 100)}%` : "정답률 --";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold 16px ${FONT}`;
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#9ecbe8";
+  ctx.fillText(`${u.name} ${u.title} · ${pct}`, 14, CONFIG.UI_TOP - 18);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#ffe9a8";
+  ctx.fillText(`구출한 아기 오리: ${rescued}마리`, CONFIG.W - 14, CONFIG.UI_TOP - 18);
+}
+
+// 질문을 1~2줄로 자동 배치: 한 줄로 안 들어가면 가운데 공백에서 나누고,
+// 그래도 넘치면 폭에 맞을 때까지 글씨를 줄인다.
+function drawQuestionText(text) {
+  const maxW = CONFIG.W - 30;
+  const full = "Q. " + text;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold 24px ${FONT}`;
+  if (ctx.measureText(full).width <= maxW) {
+    ctx.fillText(full, CONFIG.W / 2, 38);
+    return;
+  }
+  // 가운데에서 가장 가까운 공백을 찾아 두 줄로 분리
+  let bestIdx = -1, bestDist = Infinity;
+  const mid = full.length / 2;
+  for (let i = 0; i < full.length; i++) {
+    if (full[i] === " ") {
+      const d = Math.abs(i - mid);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+  }
+  let l1 = full, l2 = "";
+  if (bestIdx > 0) { l1 = full.slice(0, bestIdx); l2 = full.slice(bestIdx + 1); }
+  let font = 22;
+  ctx.font = `bold ${font}px ${FONT}`;
+  while (font > 14 && Math.max(ctx.measureText(l1).width, ctx.measureText(l2).width) > maxW) {
+    font--;
+    ctx.font = `bold ${font}px ${FONT}`;
+  }
+  ctx.fillText(l1, CONFIG.W / 2, 25);
+  ctx.fillText(l2, CONFIG.W / 2, 52);
+}
+
+// 글씨가 maxW보다 넓으면 min까지 크기를 줄여 맞춘다 (ctx.font 설정 후 크기 반환)
+function fitFontSize(text, base, maxW, min) {
+  let s = base;
+  ctx.font = `bold ${s}px ${FONT}`;
+  while (s > min && ctx.measureText(text).width > maxW) {
+    s--;
+    ctx.font = `bold ${s}px ${FONT}`;
+  }
+  return s;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawButton(b) {
+  if (b.small) {
+    // 보조 버튼 (기록 초기화 등): 작고 차분한 스타일
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill();
+    ctx.strokeStyle = "#7a8ba0"; ctx.lineWidth = 2;
+    roundRect(b.x, b.y, b.w, b.h, 10); ctx.stroke();
+    ctx.font = `bold 18px ${FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#33475c";
+    ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    return;
+  }
+  ctx.fillStyle = "#ffd21f";
+  roundRect(b.x, b.y, b.w, b.h, 14); ctx.fill();
+  ctx.strokeStyle = "#b8860b"; ctx.lineWidth = 4;
+  roundRect(b.x, b.y, b.w, b.h, 14); ctx.stroke();
+  ctx.font = `bold 30px ${FONT}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#5a3d00";
+  ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 2);
+}
+
+function drawOverlay() {
+  ctx.fillStyle = "rgba(10,30,50,0.72)";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.H);
+}
+
+function drawStartScreen() {
+  drawOverlay();
+  // 장식용 오리와 늑대
+  drawDuckShape(CONFIG.W / 2 - 150, 96, 26, "#ffd21f", -0.2);
+  drawDuckShape(CONFIG.W / 2 + 130, 86, 15, "#ffe9a8", Math.PI - 0.3);
+  drawDuckShape(CONFIG.W / 2 + 180, 112, 15, "#ffe9a8", Math.PI - 0.1);
+  drawWolf(CONFIG.W / 2 + 260, 98, 17, Math.PI + 0.4, 0);
+
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = `bold 44px ${FONT}`;
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillText("아기 오리 구출 대작전", CONFIG.W / 2, 164);
+  ctx.font = `bold 20px ${FONT}`;
+  ctx.fillStyle = "#aad4ee";
+  ctx.fillText("초등 5학년 1학기 사회 · 스네이크 게임", CONFIG.W / 2, 202);
+
+  ctx.font = `18px ${FONT}`;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText("PC: 방향키  /  패드·폰: 화면을 원하는 방향으로 슥~ 밀기(스와이프)", CONFIG.W / 2, 244);
+  ctx.fillText("넓은 연못 속 정답 상자에 부딪히면 아기 오리 구출! (화살표가 위치 안내)", CONFIG.W / 2, 270);
+  ctx.fillStyle = "#ffcf9e";
+  ctx.fillText("틀린 상자·바위·늑대에 부딪히면 아기 오리 한 마리를 잃어요!", CONFIG.W / 2, 296);
+  ctx.fillStyle = "#ffb3b3";
+  ctx.fillText("아기 오리가 없을 때 늑대·바위에 닿거나, 행렬에 부딪히면 게임 오버!", CONFIG.W / 2, 322);
+
+  // 단원별 누적 정답률 (localStorage에 저장된 기록)
+  ctx.font = `bold 20px ${FONT}`;
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 362);
+  ctx.font = `17px ${FONT}`;
+  ctx.fillStyle = "#d9ecf7";
+  for (let i = 0; i < UNITS.length; i++) {
+    ctx.fillText(statText(i), CONFIG.W / 2, 392 + i * 26);
+  }
+
+  drawButton(BUTTONS.start);
+  drawButton(BUTTONS.reset);
+}
+
+function drawGameOverScreen() {
+  drawOverlay();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = `bold 48px ${FONT}`;
+  ctx.fillStyle = "#ff6b6b";
+  ctx.fillText("게임 오버!", CONFIG.W / 2, 168);
+  ctx.font = `bold 28px ${FONT}`;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(`구출한 아기 오리: ${rescued}마리`, CONFIG.W / 2, 228);
+  ctx.font = `18px ${FONT}`;
+  ctx.fillStyle = "#aad4ee";
+  ctx.fillText(`${gameOverReason} 다시 도전해 볼까요?`, CONFIG.W / 2, 264);
+
+  // 단원별 누적 정답률
+  ctx.font = `bold 20px ${FONT}`;
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 306);
+  ctx.font = `17px ${FONT}`;
+  ctx.fillStyle = "#d9ecf7";
+  for (let i = 0; i < UNITS.length; i++) {
+    ctx.fillText(statText(i), CONFIG.W / 2, 334 + i * 26);
+  }
+
+  drawButton(BUTTONS.restart);
+}
+
+/* ============================================================
+ * [12] 메인 루프 (dt 기반 → 기기 성능과 무관하게 동일 속도)
+ * ============================================================ */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); // 탭 전환 등 큰 dt 방지
+  last = now;
+  if (state === "playing") update(dt);
+  updateFeedbacks(dt);
+  render(now / 1000);
+  requestAnimationFrame(frame);
+}
+
+initGame();          // 시작 화면 뒤 배경용 초기화
+state = "start";
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
