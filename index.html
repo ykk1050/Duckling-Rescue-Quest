@@ -404,16 +404,18 @@ class DuckSprite {
 
     // 방향별로 사용할 격자 칸 목록 [열 c, 행 r]
     // 1행(r=0): 정면/오른쪽 | 2행(r=1): 뒷모습/왼쪽
-    // ※ 1행 2번 칸(c2)은 몸을 정면으로 살짝 튼 3/4 시점이라 작게 그리면
-    //   왼쪽 꽁지깃이 부리처럼 보이는 착시가 있어, 오른쪽 이동에는
-    //   옆모습이 뚜렷한 3~5번 칸을 사용한다.
+    // ※ 1행의 오른쪽 보기 칸들(c2~c5)은 몸을 살짝 튼 3/4 시점이라
+    //   게임 크기로 축소하면 왼쪽을 보는 것처럼 읽히는 착시가 있다.
+    //   그래서 오른쪽 이동은 방향이 또렷한 2행 왼쪽 옆모습(c3~c5)을
+    //   좌우 반전(flipX)해서 사용한다. (게임에서 흔히 쓰는 기법)
     this.anims = {
       down:  [{ c: 0, r: 0 }, { c: 1, r: 0 }],                 // 정면 걷기
-      right: [{ c: 3, r: 0 }, { c: 4, r: 0 }, { c: 5, r: 0 }], // 오른쪽 걷기 (뚜렷한 옆모습)
+      right: [{ c: 3, r: 1 }, { c: 4, r: 1 }, { c: 5, r: 1 }], // 왼쪽 옆모습을 반전해 오른쪽으로
       up:    [{ c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }], // 뒷모습 걷기 (기본)
       left:  [{ c: 3, r: 1 }, { c: 4, r: 1 }, { c: 5, r: 1 }], // 왼쪽 걷기
-      upAlt: [{ c: 2, r: 0 }],                                 // 예비: 3/4 시점 (현재 미사용)
+      upAlt: [{ c: 4, r: 0 }, { c: 5, r: 0 }],                 // 예비: 1행 원본 오른쪽 칸 (미사용)
     };
+    this.flipX = { right: true }; // 이 방향들은 그릴 때 좌우 반전
 
     const img = new Image();
     img.onload = () => {
@@ -440,12 +442,45 @@ class DuckSprite {
         if (px[i] >= th && px[i + 1] >= th && px[i + 2] >= th) px[i + 3] = 0;
       }
       octx.putImageData(data, 0, 0);
+      this.computeOffsets(data);
       return off;
     } catch (e) {
       // file:// 로 직접 열면 보안 정책 때문에 픽셀 접근이 막힐 수 있음
-      // → 투명화 없이 원본 이미지 그대로 사용 (게임은 정상 동작)
-      console.warn("스프라이트 투명화 실패(로컬 보안 정책). 로컬 서버로 열면 배경이 투명해집니다.", e);
+      // → 투명화·중심 보정 없이 원본 이미지 그대로 사용 (게임은 정상 동작)
+      console.warn("스프라이트 픽셀 가공 실패(로컬 보안 정책). 로컬 서버로 열면 완전하게 표시됩니다.", e);
+      this.offsets = null;
       return img;
+    }
+  }
+
+  // 칸마다 오리 그림이 정중앙에 있지 않아 프레임 전환 시 위치가 튀는 문제 보정:
+  // 각 칸에서 비투명 픽셀의 중심이 칸 중심에서 얼마나 벗어났는지 미리 계산해 두고,
+  // 그릴 때 그만큼 반대로 밀어 어느 프레임이든 오리가 같은 자리에 그려지게 한다.
+  computeOffsets(data) {
+    this.offsets = [];
+    const W = data.width, px = data.data;
+    const cw = Math.floor(this.sw), ch = Math.floor(this.sh);
+    for (let r = 0; r < this.rows; r++) {
+      const row = [];
+      for (let c = 0; c < this.cols; c++) {
+        const x0 = Math.floor(c * this.sw), y0 = Math.floor(r * this.sh);
+        let minX = Infinity, maxX = -1, minY = Infinity, maxY = -1;
+        for (let y = 0; y < ch; y++) {
+          for (let x = 0; x < cw; x++) {
+            if (px[((y0 + y) * W + (x0 + x)) * 4 + 3] > 8) { // 알파 있는 픽셀만
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        row.push(maxX < 0 ? { ox: 0, oy: 0 } : {
+          ox: (minX + maxX) / 2 - this.sw / 2, // 그림 중심의 가로 치우침 (px)
+          oy: (minY + maxY) / 2 - this.sh / 2, // 그림 중심의 세로 치우침 (px)
+        });
+      }
+      this.offsets.push(row);
     }
   }
 
@@ -473,14 +508,23 @@ class DuckSprite {
   // 그리기에 성공하면 true (아직 로드 전이면 false → 호출부에서 도형 폴백)
   draw(ctx, x, y, drawH, dirName) {
     if (!this.ready) return false;
-    const frames = this.anims[dirName || this.dirName];
+    const dn = dirName || this.dirName;
+    const frames = this.anims[dn];
     const f = frames[this.frameIndex % frames.length];
     const drawW = drawH * (this.sw / this.sh); // 칸 비율 유지
+    const scale = drawH / this.sh;
+    // 칸 안에서 그림이 치우친 만큼 반대로 밀어, 프레임이 바뀌어도 오리가 흔들리지 않게
+    const off = this.offsets ? this.offsets[f.r][f.c] : { ox: 0, oy: 0 };
+    ctx.save();
+    ctx.translate(x, y);                       // (x, y)를 원점으로
+    if (this.flipX[dn]) ctx.scale(-1, 1);      // 필요한 방향은 좌우 반전해서 그림
     ctx.drawImage(
       this.sheet,
-      f.c * this.sw, f.r * this.sh, this.sw, this.sh, // 소스 크롭 (sx, sy, sW, sH)
-      x - drawW / 2, y - drawH / 2, drawW, drawH      // 목적지 (dx, dy, dW, dH)
+      f.c * this.sw, f.r * this.sh, this.sw, this.sh,             // 소스 크롭 (sx, sy, sW, sH)
+      -drawW / 2 - off.ox * scale, -drawH / 2 - off.oy * scale,   // 목적지 (dx, dy) — 원점 중심
+      drawW, drawH                                                // 목적지 크기 (dW, dH)
     );
+    ctx.restore();
     return true;
   }
 }
@@ -527,7 +571,7 @@ function worldDist(x1, y1, x2, y2) {
  * [6] 게임 상태
  * ============================================================ */
 let state = "start";   // "start" | "playing" | "gameover"
-let duck, dir, pendingDir, trail, rescued, boxes, feedbacks, speed;
+let duck, dir, dirQueue, trail, rescued, boxes, feedbacks, speed;
 let cam = { x: 0, y: 0 };
 let rocks, wolves, gameTime, nextHazardAt, invulnUntil, gameOverReason;
 let lostDucks; // 잃어서 떠내려가는 아기 오리 연출용
@@ -553,7 +597,7 @@ function initGame() {
   duck = { x: CONFIG.WORLD_W / 2, y: CONFIG.WORLD_H / 2 };
   cam = { x: duck.x, y: duck.y };
   dir = { x: 1, y: 0 };
-  pendingDir = null;
+  dirQueue = [];
   trail = [];
   rescued = 0;
   nextQuestion();
@@ -622,8 +666,13 @@ function spawnHazard() {
  *     Pointer Events로 마우스/터치를 통합 처리하고,
  *     touch 이벤트에는 preventDefault로 화면 스크롤 버그를 차단.
  * ============================================================ */
+// 입력을 큐에 순서대로 쌓는다. (빠르게 연속 입력해도 앞의 입력이 덮어써져
+// 사라지지 않고, 한 프레임에 하나씩 차례대로 적용된다 → 즉각적인 조작감)
 function setDir(nx, ny) {
-  pendingDir = { x: nx, y: ny }; // 실제 적용은 프레임당 1회(update)에서 역주행 검사 후
+  const last = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+  if (last.x === nx && last.y === ny) return; // 직전 입력과 같으면 무시 (키 반복 등)
+  dirQueue.push({ x: nx, y: ny });
+  if (dirQueue.length > 3) dirQueue.shift(); // 너무 오래된 입력은 버림
 }
 
 // 키보드 (방향키 + WASD)
@@ -748,10 +797,14 @@ function update(dt) {
     nextHazardAt += CONFIG.HAZARD_INTERVAL;
   }
 
-  // 방향 적용 (역주행 = 즉시 자기 꼬리 충돌이므로 금지)
-  if (pendingDir) {
-    if (!(pendingDir.x === -dir.x && pendingDir.y === -dir.y)) dir = pendingDir;
-    pendingDir = null;
+  // 방향 적용: 큐에서 유효한 입력을 하나 꺼내 적용 (프레임당 1회 회전)
+  // 역주행(정반대 방향)은 즉시 자기 꼬리와 충돌하므로 건너뛴다.
+  while (dirQueue.length) {
+    const d = dirQueue.shift();
+    if (d.x === dir.x && d.y === dir.y) continue;   // 이미 그 방향
+    if (d.x === -dir.x && d.y === -dir.y) continue; // 역주행 금지
+    dir = d;
+    break;
   }
 
   // 스프라이트 시트 방향 동기화 (이동 방향에 맞는 행/열 세트 선택)
