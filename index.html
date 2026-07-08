@@ -25,6 +25,11 @@
     /* 4:3 비율을 유지하면서 화면(가로/세로 중 작은 쪽)에 꽉 차게 */
     width:  min(100vw, calc(100vh * 4 / 3));
     height: min(100vh, calc(100vw * 3 / 4));
+    /* 패드·폰 가로 모드 대응: vh는 브라우저 주소창 뒤 영역까지 포함해
+       위아래가 잘리므로, 지원 브라우저에서는 '실제 보이는 영역' 기준인
+       dvh/dvw로 덮어쓴다 (미지원 브라우저는 위의 vh 값 사용) */
+    width:  min(100dvw, calc(100dvh * 4 / 3));
+    height: min(100dvh, calc(100dvw * 3 / 4));
     display: block;
     background: #7ec8e3;
     touch-action: none;            /* 브라우저의 스크롤/줌 제스처 차단 */
@@ -37,7 +42,9 @@
      재생/정지는 아이콘 하나로 토글해 공간을 아끼고, 옆의 슬라이더로 음량만 조절한다. */
   #bgm-controls {
     position: fixed;
-    top: 10px; left: 10px;
+    /* 가로 모드에서는 캔버스가 화면 높이를 꽉 채워 위젯이 상단 문제 글줄을
+       가릴 수 있으므로, 게임 정보가 없는 왼쪽 아래 모서리에 둔다 */
+    bottom: 10px; left: 10px;
     z-index: 1000;
     display: flex; align-items: center; gap: 8px;
     background: rgba(10, 30, 50, 0.6);
@@ -576,7 +583,7 @@ function worldDist(x1, y1, x2, y2) {
 /* ============================================================
  * [6] 게임 상태
  * ============================================================ */
-let state = "start";   // "start" | "playing" | "gameover"
+let state = "start";   // "start" | "playing" | "paused" | "gameover"
 let duck, dir, dirQueue, trail, rescued, boxes, feedbacks, speed;
 let cam = { x: 0, y: 0 };
 let rocks, wolves, gameTime, nextHazardAt, invulnUntil, gameOverReason;
@@ -585,6 +592,7 @@ let lostDucks; // 잃어서 떠내려가는 아기 오리 연출용
 const BUTTONS = {
   start:   { x: CONFIG.W/2 - 110, y: 468, w: 220, h: 62, label: "게임 시작" },
   restart: { x: CONFIG.W/2 - 110, y: 412, w: 220, h: 66, label: "다시 시작" },
+  resume:  { x: CONFIG.W/2 - 110, y: 330, w: 220, h: 66, label: "이어서 하기" },
   reset:   { x: 628, y: 544, w: 156, h: 42, label: "기록 초기화", small: true },
 };
 
@@ -693,7 +701,8 @@ window.addEventListener("keydown", (e) => {
   }
   if ((e.key === "Enter" || e.key === " ") && state !== "playing") {
     e.preventDefault();
-    startGame();
+    if (state === "paused") resumeGame(); // 일시정지 중엔 이어서 하기
+    else startGame();
   }
 });
 
@@ -710,6 +719,10 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (state === "gameover") {
     if (hitButton(BUTTONS.restart, p)) startGame();
+    return;
+  }
+  if (state === "paused") {
+    if (hitButton(BUTTONS.resume, p)) resumeGame();
     return;
   }
   swipe = { active: true, x: p.x, y: p.y };
@@ -790,6 +803,36 @@ bgmVolumeSlider.addEventListener("input", () => {
 // 첫 화면에서도 아무 키/터치나 누르면 바로 배경음악이 흐르도록 (시작 버튼 전에도 대응)
 window.addEventListener("keydown", () => playBgm(), { once: true });
 canvas.addEventListener("pointerdown", () => playBgm(), { once: true });
+
+/* ============================================================
+ * [8.5] 자동 일시정지 / 이어서 하기
+ *   다른 탭·앱으로 화면을 바꾸거나 창을 내리면 게임과 음악을 멈추고,
+ *   돌아왔을 때 "이어서 하기" 화면에서 이어서 할 수 있다.
+ * ============================================================ */
+let bgmAutoPaused = false; // 자동 일시정지가 음악을 멈췄는지 (수동 정지와 구분)
+
+function pauseGame() {
+  if (state !== "playing") return; // 시작·게임오버 화면에서는 멈출 것이 없음
+  state = "paused";
+  bgmAutoPaused = !bgm.paused;     // 재개할 때 음악을 다시 켤지 기억
+  bgm.pause();
+}
+
+function resumeGame() {
+  if (state !== "paused") return;
+  dirQueue = [];        // 멈춘 사이 쌓인 방향 입력은 버림 (재개 직후 오작동 방지)
+  swipe.active = false;
+  state = "playing";
+  if (bgmAutoPaused && !bgmUserPaused) bgm.play().catch(() => {});
+  bgmAutoPaused = false;
+}
+
+// 탭 전환·앱 전환·창 최소화 감지
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseGame();
+});
+// 다른 창을 클릭해 포커스를 잃었을 때 (탭은 그대로 보여도 조작 불가 상태)
+window.addEventListener("blur", pauseGame);
 
 /* ============================================================
  * [9] 게임 로직 업데이트
@@ -1078,6 +1121,7 @@ function render(time) {
   drawTopBar(q);
 
   if (state === "gameover") drawGameOverScreen();
+  else if (state === "paused") drawPauseScreen();
 }
 
 function drawWater(time) {
@@ -1400,6 +1444,22 @@ function drawStartScreen() {
 
   drawButton(BUTTONS.start);
   drawButton(BUTTONS.reset);
+}
+
+function drawPauseScreen() {
+  drawOverlay();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = `bold 46px ${FONT}`;
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillText("잠깐 멈췄어요!", CONFIG.W / 2, 196);
+  ctx.font = `20px ${FONT}`;
+  ctx.fillStyle = "#d9ecf7";
+  ctx.fillText("다른 화면으로 나가면 게임이 자동으로 멈춰요.", CONFIG.W / 2, 246);
+  ctx.fillText(`지금까지 구출한 아기 오리: ${rescued}마리`, CONFIG.W / 2, 278);
+  drawButton(BUTTONS.resume);
+  ctx.font = `16px ${FONT}`;
+  ctx.fillStyle = "#9ecbe8";
+  ctx.fillText("(Enter나 스페이스 키를 눌러도 이어서 할 수 있어요)", CONFIG.W / 2, BUTTONS.resume.y + 100);
 }
 
 function drawGameOverScreen() {
