@@ -62,6 +62,67 @@
   #bgm-volume {
     width: 72px; height: 20px; accent-color: #ffd21f; cursor: pointer;
   }
+
+  /* ===== 하단 크레딧 (레터박스 여백, 게임 화면을 가리지 않음) ===== */
+  #credit {
+    position: fixed;
+    bottom: 4px; left: 50%; transform: translateX(-50%);
+    z-index: 999;
+    color: rgba(255, 255, 255, 0.45);
+    font: 12px 'Malgun Gothic', sans-serif;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  /* ===== 랭킹 UI (게임오버 등록 창 + 명예의 전당) ===== */
+  #board-open {
+    position: fixed; bottom: 10px; left: 152px; z-index: 1000;
+    height: 48px; padding: 0 16px; border: none; border-radius: 24px;
+    background: rgba(10, 30, 50, 0.6); color: #ffd21f;
+    font: bold 15px 'Malgun Gothic', sans-serif; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ovl {
+    position: fixed; inset: 0; z-index: 1001;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(5, 20, 35, 0.55);
+  }
+  .ovl.hidden { display: none; }
+  .ovl .card {
+    background: #12293d; border: 2px solid #ffd21f; border-radius: 14px;
+    padding: 16px 18px; width: min(92vw, 400px); max-height: 86vh; overflow-y: auto;
+    color: #eaf4fb; font: 15px 'Malgun Gothic', sans-serif;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  }
+  .ovl h3 { margin: 0 0 10px; color: #ffd21f; font-size: 19px; }
+  .ovl .warn {
+    background: rgba(214, 48, 49, 0.18); border: 1px solid #d63031;
+    border-radius: 8px; padding: 8px 10px; margin: 10px 0;
+    color: #ffb3b3; font-size: 13px; line-height: 1.55;
+  }
+  .ovl input[type="text"] {
+    width: 100%; box-sizing: border-box; padding: 9px 10px; margin: 4px 0 10px;
+    border: 1px solid #4a6a88; border-radius: 8px;
+    background: #0c1e30; color: #fff; font-size: 16px;
+  }
+  .ovl .btn-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  .ovl button {
+    padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer;
+    font: bold 15px 'Malgun Gothic', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ovl button.primary { background: #ffd21f; color: #5a3d00; }
+  .ovl button.ghost { background: #2c4a66; color: #d9ecf7; }
+  .ovl button:disabled { opacity: 0.5; cursor: default; }
+  .ovl .status { margin-top: 10px; font-size: 13px; color: #9ecbe8; min-height: 18px; line-height: 1.5; }
+  .ovl .tabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
+  .ovl .tabs button { padding: 5px 10px; font-size: 13px; border-radius: 14px; background: #2c4a66; color: #d9ecf7; }
+  .ovl .tabs button.on { background: #ffd21f; color: #5a3d00; }
+  .ovl ol { margin: 6px 0; padding-left: 26px; }
+  .ovl ol li { padding: 3px 0; font-size: 14px; }
+  .ovl ol li b { color: #ffe9a8; }
+  .ovl .summary { background: #0c1e30; border-radius: 8px; padding: 8px 12px; font-size: 14px; line-height: 1.7; }
+  .ovl .note { font-size: 12px; color: #7fa8c9; margin: 4px 0 8px; }
 </style>
 </head>
 <body>
@@ -72,6 +133,51 @@
   <input id="bgm-volume" type="range" min="0" max="100" value="50" aria-label="배경음악 음량">
 </div>
 <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
+
+<!-- 하단 크레딧 -->
+<div id="credit">Created by gamtudyssam using AI 0.0007</div>
+
+<!-- 랭킹 보기 버튼 (BGM 위젯 옆) -->
+<button id="board-open" type="button">🏆 랭킹</button>
+
+<!-- 게임오버: 랭킹 등록 창 -->
+<div id="rank-panel" class="ovl hidden">
+  <div class="card">
+    <h3>🏆 랭킹 등록</h3>
+    <div class="summary" id="rank-summary"></div>
+    <div class="warn">⚠️ 닉네임에 <b>실명, 전화번호, 학교·반·번호</b> 같은
+      개인정보를 절대 넣지 마세요!<br>별명만 사용해요. (예: 날쌘오리, 연못지킴이)</div>
+    <div id="rank-step1">
+      <input id="rank-nick" type="text" maxlength="10" placeholder="닉네임 (2~10자)" autocomplete="off">
+      <div class="btn-row">
+        <button class="ghost" id="rank-close1" type="button">등록 안 함</button>
+        <button class="primary" id="rank-submit1" type="button">랭킹 등록</button>
+      </div>
+    </div>
+    <div id="rank-step2" style="display:none">
+      <p id="rank-confirm-text" style="margin:6px 0 12px; line-height:1.7;"></p>
+      <div class="btn-row">
+        <button class="ghost" id="rank-back" type="button">다시 입력</button>
+        <button class="primary" id="rank-submit2" type="button">네, 등록할게요</button>
+      </div>
+    </div>
+    <div class="status" id="rank-status"></div>
+  </div>
+</div>
+
+<!-- 명예의 전당 (랭킹 보기) -->
+<div id="board-panel" class="ovl hidden">
+  <div class="card">
+    <h3>🏆 명예의 전당</h3>
+    <div class="tabs" id="board-tabs"></div>
+    <div class="note" id="board-note"></div>
+    <div id="board-list">불러오는 중...</div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="ghost" id="board-refresh" type="button">새로고침</button>
+      <button class="ghost" id="board-close" type="button">닫기</button>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -163,6 +269,22 @@ const CONFIG = {
   // 피드백 텍스트
   FEEDBACK_LIFE: 1.1,     // 떠 있는 시간(초)
   LOST_DUCK_LIFE: 1.3,    // 잃은 아기 오리가 떠내려가며 사라지는 시간(초)
+
+  // 점수
+  SCORE_RESCUE: 100,      // 아기 오리 1마리 구출 기본 점수
+  SCORE_COMBO_BONUS: 20,  // 연속 구출(콤보) 1단계마다 추가되는 보너스 점수
+  SCORE_COMBO_MAX: 100,   // 콤보 보너스 상한 (기본+보너스 = 최대 200점)
+  SCORE_WRONG: 50,        // 오답(시간 초과 포함) 감점
+  SCORE_LOST_DUCK: 20,    // 늑대·바위에게 아기 오리를 잃을 때 1마리당 감점
+
+  // 늑대에게 잡히면 아기 오리의 1/5(올림)이 잡혀가거나 도망친다.
+  // 5마리 이하일 때는 자동으로 1마리만 잃는다. (Math.ceil(마리수/5))
+  WOLF_STEAL_DIV: 5,
+
+  // 랭킹 서버 — Google Apps Script 웹 앱 배포 URL(/exec로 끝남)을 붙여넣으세요.
+  // 배포 방법은 같은 폴더의 ranking_appscript.gs 파일 맨 위 안내 참고.
+  // 비워두면 랭킹 등록/보기 창에 안내 문구만 표시된다.
+  RANKING_URL: "",
 };
 
 /* ============================================================
@@ -612,6 +734,13 @@ let rocks, wolves, gameTime, nextHazardAt, invulnUntil, gameOverReason;
 let questionsAnswered; // 이번 판에서 푼 문제 수 (첫 문제 오답 = 게임 오버 판정용)
 let questionTimeLeft = 0; // 현재 문제의 남은 시간 (초). 문제가 바뀔 때마다 리셋.
 let lostDucks; // 잃어서 떠내려가는 아기 오리 연출용
+let score;       // 이번 판 점수 (0 아래로는 내려가지 않음)
+let combo;       // 현재 연속 구출(콤보) 횟수 — 오답·시간 초과 시 0으로 리셋
+let maxCombo;    // 이번 판 최고 콤보 (랭킹용)
+let maxRescued;  // 이번 판 한 번에 가장 많이 데리고 다닌 아기 오리 수 (랭킹용)
+let gameCorrect; // 이번 판 맞힌 문제 수
+let gameWrong;   // 이번 판 틀린 문제 수 (시간 초과 포함)
+let gameStartMs; // 이번 판 시작 시각 (플레이 시간 계산용)
 
 const BUTTONS = {
   start:   { x: CONFIG.W/2 - 110, y: 468, w: 220, h: 62, label: "게임 시작" },
@@ -649,6 +778,13 @@ function initGame() {
   gameOverReason = "";
   questionsAnswered = 0;
   lostDucks = [];
+  score = 0;
+  combo = 0;
+  maxCombo = 0;
+  maxRescued = 0;
+  gameCorrect = 0;
+  gameWrong = 0;
+  gameStartMs = Date.now();
   spawnBoxes();
 }
 
@@ -814,6 +950,8 @@ function hitDpad(p) {
 }
 
 function startGame() {
+  hideRankPanel();  // 열려 있던 랭킹 창들은 닫고 시작
+  hideBoardPanel();
   initGame();
   state = "playing";
   playBgm(); // 버튼 클릭(사용자 제스처) 시점이라 브라우저 자동재생 차단에 걸리지 않는다
@@ -961,21 +1099,32 @@ function update(dt) {
       if (b.choice === currentQ.answer) {
         recordAnswer(currentQ.unit, true); // 단원별 정답률 기록
         rescued++;
+        gameCorrect++;
+        combo++;
+        maxCombo = Math.max(maxCombo, combo);
+        maxRescued = Math.max(maxRescued, rescued);
+        // 점수: 기본 점수 + 콤보 보너스 (연속으로 맞힐수록 커지고, 상한 있음)
+        const bonus = Math.min(CONFIG.SCORE_COMBO_BONUS * (combo - 1), CONFIG.SCORE_COMBO_MAX);
+        const pts = CONFIG.SCORE_RESCUE + bonus;
+        score += pts;
         speed = Math.min(CONFIG.MAX_SPEED, CONFIG.DUCK_SPEED + rescued * CONFIG.SPEED_PER_RESCUE);
-        addFeedback("+1 구출!", duckScreen.x, duckScreen.y - 34, "#1a9e3f");
+        addFeedback(combo >= 2 ? `콤보 x${combo}! +${pts}점` : `+1 구출! +${pts}점`,
+          duckScreen.x, duckScreen.y - 34, "#1a9e3f");
       } else {
         recordAnswer(currentQ.unit, false);
+        gameWrong++;
+        combo = 0; // 오답 → 콤보 끊김
+        score = Math.max(0, score - CONFIG.SCORE_WRONG);
         // 첫 번째 문제를 틀리면 바로 게임 오버
         if (questionsAnswered === 0) {
-          gameOverReason = "첫 번째 문제를 틀렸어요.";
-          state = "gameover";
+          endGame("첫 번째 문제를 틀렸어요.");
           break;
         }
         // 오답 페널티: 틀린 상자에서 늑대가 튀어나온다!
         spawnWolfAt(b.cx, b.cy);
         // 코앞에서 나온 늑대에게 바로 물리지 않도록 잠깐 무적 (도망갈 시간)
         invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
-        addFeedback("틀렸어! 늑대가 튀어나왔다!", duckScreen.x, duckScreen.y - 34, "#d63031");
+        addFeedback(`틀렸어! -${CONFIG.SCORE_WRONG}점, 늑대 등장!`, duckScreen.x, duckScreen.y - 34, "#d63031");
       }
       questionsAnswered++;
       nextQuestion(); // 정답이든 오답이든 즉시 다음 문제로 (무작위 + 보기 섞기)
@@ -989,16 +1138,18 @@ function update(dt) {
     questionTimeLeft -= dt;
     if (questionTimeLeft <= 0) {
       recordAnswer(currentQ.unit, false); // 시간 초과 = 오답으로 기록
+      gameWrong++;
+      combo = 0; // 시간 초과도 콤보 끊김
+      score = Math.max(0, score - CONFIG.SCORE_WRONG);
       if (questionsAnswered === 0) {
         // 첫 문제는 시간 초과도 게임 오버 (오답과 같은 규칙)
-        gameOverReason = "시간 안에 첫 문제를 풀지 못했어요.";
-        state = "gameover";
+        endGame("시간 안에 첫 문제를 풀지 못했어요.");
       } else {
         // 오답과 같은 페널티: 틀린 상자 자리에서 늑대가 튀어나온다
         const wrongBox = boxes.find(b => b.choice !== currentQ.answer) || boxes[0];
         spawnWolfAt(wrongBox.cx, wrongBox.cy);
         invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
-        addFeedback("시간 초과! 늑대가 나타났다!", duckScreen.x, duckScreen.y - 34, "#d63031");
+        addFeedback(`시간 초과! -${CONFIG.SCORE_WRONG}점, 늑대 등장!`, duckScreen.x, duckScreen.y - 34, "#d63031");
         questionsAnswered++;
         nextQuestion(); // 제한 시간도 함께 리셋된다
         spawnBoxes();
@@ -1011,7 +1162,7 @@ function update(dt) {
     // 바위
     for (const r of rocks) {
       if (worldDist(duck.x, duck.y, r.x, r.y) < CONFIG.DUCK_RADIUS + r.r - 4) {
-        hitHazard("쿵! 아기 오리 -1", "바위에 부딪혔어요...", duckScreen);
+        hitHazard("rock", "바위에 부딪혔어요...", duckScreen);
         break;
       }
     }
@@ -1020,7 +1171,7 @@ function update(dt) {
     // 늑대
     for (const w of wolves) {
       if (worldDist(duck.x, duck.y, w.x, w.y) < CONFIG.DUCK_RADIUS + CONFIG.WOLF_RADIUS - 2) {
-        const survived = hitHazard("늑대가 물어갔어! -1", "늑대에게 잡혔어요...", duckScreen);
+        const survived = hitHazard("wolf", "늑대에게 잡혔어요...", duckScreen);
         if (survived) {
           // 아기 오리를 물고 멀리 달아났다가 다른 곳에서 다시 등장
           const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, rocks, 150);
@@ -1035,11 +1186,17 @@ function update(dt) {
   for (let i = CONFIG.TAIL_SAFE_COUNT; i < tailPos.length; i++) {
     const t = tailPos[i];
     if (worldDist(duck.x, duck.y, t.x, t.y) < CONFIG.DUCK_RADIUS + CONFIG.DUCKLING_RADIUS - 4) {
-      gameOverReason = "아기 오리 행렬에 부딪혔어요.";
-      state = "gameover";
+      endGame("아기 오리 행렬에 부딪혔어요.");
       break;
     }
   }
+}
+
+// 게임 오버 공통 처리: 사유 기록 + 랭킹 등록 창 열기
+function endGame(reason) {
+  gameOverReason = reason;
+  state = "gameover";
+  showRankPanel();
 }
 
 // 틀린 상자에서 늑대가 튀어나온다.
@@ -1057,17 +1214,26 @@ function spawnWolfAt(x, y) {
   farthest.x = x; farthest.y = y;
 }
 
-// 장애물 피격 공통 처리. 아기 오리가 있으면 1마리 잃고 무적, 없으면 게임 오버.
+// 장애물 피격 공통 처리.
+// 늑대(kind="wolf"): 아기 오리의 1/5(올림)이 잡혀가거나 뿔뿔이 도망친다.
+//   → 5마리 이하일 때는 자동으로 1마리만 잃는다. (예: 5마리→1, 8마리→2, 12마리→3)
+// 바위(kind="rock"): 1마리만 잃는다.
+// 잃은 마리 수만큼 점수도 깎인다. 아기 오리가 한 마리도 없으면 게임 오버.
 // 살아남았으면 true를 반환.
-function hitHazard(lossText, overReason, duckScreen) {
-  if (loseDuckling()) {
-    invulnUntil = gameTime + CONFIG.HIT_INVINCIBLE;
-    addFeedback(lossText, duckScreen.x, duckScreen.y - 34, "#d63031");
-    return true;
+function hitHazard(kind, overReason, duckScreen) {
+  if (rescued <= 0) {
+    endGame(overReason);
+    return false;
   }
-  gameOverReason = overReason;
-  state = "gameover";
-  return false;
+  const lost = kind === "wolf" ? Math.ceil(rescued / CONFIG.WOLF_STEAL_DIV) : 1;
+  for (let i = 0; i < lost; i++) loseDuckling(); // 잃는 연출도 마리 수만큼
+  const pts = lost * CONFIG.SCORE_LOST_DUCK;
+  score = Math.max(0, score - pts);
+  invulnUntil = gameTime + CONFIG.HIT_INVINCIBLE;
+  addFeedback(
+    kind === "wolf" ? `늑대에게 ${lost}마리 뺏김! -${pts}점` : `쿵! 아기 오리 -1 · -${pts}점`,
+    duckScreen.x, duckScreen.y - 34, "#d63031");
+  return true;
 }
 
 // 행렬 맨 끝의 아기 오리 1마리를 잃는다. 그 자리에서 떠내려가는 연출을 남긴다.
@@ -1447,7 +1613,8 @@ function drawTopBar(q) {
   ctx.fillText(`${u.name} ${u.title} · ${pct}`, 14, CONFIG.UI_TOP - 18);
   ctx.textAlign = "right";
   ctx.fillStyle = "#ffe9a8";
-  ctx.fillText(`구출한 아기 오리: ${rescued}마리`, CONFIG.W - 14, CONFIG.UI_TOP - 18);
+  const comboTag = combo >= 2 ? ` · 콤보 x${combo}` : "";
+  ctx.fillText(`점수 ${score}${comboTag} · 오리 ${rescued}마리`, CONFIG.W - 14, CONFIG.UI_TOP - 18);
 
   // 가운데 = 남은 시간 (10초 이하면 빨갛게 깜빡이며 경고)
   const t = Math.max(0, Math.ceil(questionTimeLeft));
@@ -1607,28 +1774,217 @@ function drawPauseScreen() {
 function drawGameOverScreen() {
   drawOverlay();
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = `bold 48px ${FONT}`;
+  ctx.font = `bold 46px ${FONT}`;
   ctx.fillStyle = "#ff6b6b";
-  ctx.fillText("게임 오버!", CONFIG.W / 2, 168);
-  ctx.font = `bold 28px ${FONT}`;
+  ctx.fillText("게임 오버!", CONFIG.W / 2, 158);
+  ctx.font = `bold 32px ${FONT}`;
+  ctx.fillStyle = "#ffd21f";
+  ctx.fillText(`점수 ${score}점`, CONFIG.W / 2, 212);
+  ctx.font = `bold 20px ${FONT}`;
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(`구출한 아기 오리: ${rescued}마리`, CONFIG.W / 2, 228);
-  ctx.font = `18px ${FONT}`;
+  ctx.fillText(`최다 구출 ${maxRescued}마리 · 최고 콤보 ${maxCombo}연속`, CONFIG.W / 2, 250);
+  ctx.font = `16px ${FONT}`;
   ctx.fillStyle = "#aad4ee";
-  ctx.fillText(`${gameOverReason} 다시 도전해 볼까요?`, CONFIG.W / 2, 264);
+  ctx.fillText(`${gameOverReason} 다시 도전해 볼까요?`, CONFIG.W / 2, 280);
 
   // 단원별 누적 정답률
-  ctx.font = `bold 20px ${FONT}`;
+  ctx.font = `bold 19px ${FONT}`;
   ctx.fillStyle = "#ffd21f";
-  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 306);
-  ctx.font = `17px ${FONT}`;
+  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 314);
+  ctx.font = `16px ${FONT}`;
   ctx.fillStyle = "#d9ecf7";
   for (let i = 0; i < UNITS.length; i++) {
-    ctx.fillText(statText(i), CONFIG.W / 2, 334 + i * 26);
+    ctx.fillText(statText(i), CONFIG.W / 2, 340 + i * 24);
   }
 
   drawButton(BUTTONS.restart);
 }
+
+/* ============================================================
+ * [RANK] 랭킹 — Google Apps Script(스프레드시트) 연동
+ *   같은 폴더의 ranking_appscript.gs를 배포한 뒤 그 웹 앱 URL을
+ *   CONFIG.RANKING_URL에 넣으면 작동한다.
+ *
+ *   조작 방지(가벼운 이중 잠금):
+ *   ① 클라이언트: 제출값을 요약한 검증 토큰을 함께 보낸다.
+ *      주소만 알아내 임의의 값을 쏘는 장난을 걸러 준다.
+ *   ② 서버(.gs): "정답 수보다 구출 수가 많다" 같은 말이 안 되는
+ *      기록만 거르는 상식 검사 + 15초 재제출 쿨다운.
+ *   정상적으로 플레이한 기록은 절대 걸리지 않도록 기준을 아주
+ *   널널하게 잡았다. (완벽한 보안이 아니라 '장난 방지' 수준)
+ * ============================================================ */
+const rankPanel = document.getElementById("rank-panel");
+const rankSummary = document.getElementById("rank-summary");
+const rankStep1 = document.getElementById("rank-step1");
+const rankStep2 = document.getElementById("rank-step2");
+const rankNick = document.getElementById("rank-nick");
+const rankConfirmText = document.getElementById("rank-confirm-text");
+const rankStatus = document.getElementById("rank-status");
+const boardPanel = document.getElementById("board-panel");
+const boardTabs = document.getElementById("board-tabs");
+const boardNote = document.getElementById("board-note");
+const boardList = document.getElementById("board-list");
+
+const RANK_SECRET = "DUCK-POND-2026"; // ranking_appscript.gs의 SECRET과 반드시 같아야 함
+let rankSubmitted = false; // 한 판에 한 번만 등록
+
+// 제출값 요약 토큰 (서버와 같은 계산식)
+function makeToken(p) {
+  const s = `${p.nick}|${p.score}|${p.maxCombo}|${p.maxRescued}|${p.gameCorrect}|${RANK_SECRET}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showRankPanel() {
+  rankSubmitted = false;
+  const dur = Math.round((Date.now() - gameStartMs) / 1000);
+  rankSummary.innerHTML =
+    `점수 <b>${score}점</b> · 최다 구출 <b>${maxRescued}마리</b> · 최고 콤보 <b>${maxCombo}연속</b><br>` +
+    `정답 ${gameCorrect} · 오답 ${gameWrong} · 플레이 ${dur}초`;
+  rankStep1.style.display = "";
+  rankStep2.style.display = "none";
+  rankStatus.textContent = CONFIG.RANKING_URL
+    ? "" : "※ 아직 랭킹 서버가 연결되지 않았어요. (선생님: CONFIG.RANKING_URL 설정)";
+  rankPanel.classList.remove("hidden");
+}
+function hideRankPanel() { rankPanel.classList.add("hidden"); }
+function hideBoardPanel() { boardPanel.classList.add("hidden"); }
+
+// 닉네임 검사: 길이 + 전화번호 의심 숫자 + 위험 문자
+function validNick(n) {
+  if (n.length < 2 || n.length > 10) return "닉네임은 2~10자로 지어 주세요.";
+  if (/\d{7,}/.test(n)) return "전화번호처럼 보이는 긴 숫자는 쓸 수 없어요.";
+  if (/[<>"'\\]/.test(n)) return "< > \" ' 같은 특수문자는 쓸 수 없어요.";
+  return null;
+}
+
+// 1단계: 등록 버튼 → 개인정보 재확인(2단계)으로
+document.getElementById("rank-submit1").addEventListener("click", () => {
+  const nick = rankNick.value.trim();
+  const err = validNick(nick);
+  if (err) { rankStatus.textContent = err; return; }
+  rankConfirmText.innerHTML =
+    `정말 <b>"${escapeHtml(nick)}"</b>(으)로 등록할까요?<br>` +
+    `닉네임에 <b>이름·전화번호 등 개인정보</b>가 없는지 한 번 더 확인해 주세요!`;
+  rankStep1.style.display = "none";
+  rankStep2.style.display = "";
+  rankStatus.textContent = "";
+});
+document.getElementById("rank-back").addEventListener("click", () => {
+  rankStep2.style.display = "none";
+  rankStep1.style.display = "";
+});
+document.getElementById("rank-close1").addEventListener("click", hideRankPanel);
+
+// 2단계: 최종 등록
+document.getElementById("rank-submit2").addEventListener("click", async () => {
+  if (rankSubmitted) return;
+  if (!CONFIG.RANKING_URL) {
+    rankStatus.textContent = "랭킹 서버가 아직 연결되지 않아 등록할 수 없어요.";
+    return;
+  }
+  const nick = rankNick.value.trim();
+  const btn = document.getElementById("rank-submit2");
+  btn.disabled = true;
+  rankStatus.textContent = "등록하는 중...";
+  const p = {
+    nick, score, maxCombo, maxRescued, gameCorrect, gameWrong,
+    duration: Math.round((Date.now() - gameStartMs) / 1000),
+    // 누적 단원별 정답률 (localStorage 기록) — 정답률 랭킹용
+    units: [0, 1, 2].map(i => {
+      const s = stats[String(i)] || { c: 0, t: 0 };
+      return [s.c, s.t];
+    }),
+  };
+  p.token = makeToken(p);
+  try {
+    // Content-Type을 지정하지 않아야(단순 요청) Apps Script에 CORS 문제없이 도달한다
+    const res = await fetch(CONFIG.RANKING_URL, { method: "POST", body: JSON.stringify(p) });
+    const j = await res.json();
+    if (j.ok) {
+      rankSubmitted = true;
+      rankStep2.style.display = "none";
+      rankStatus.textContent = "등록 완료! 🏆 왼쪽 아래 '랭킹' 버튼에서 확인해 보세요.";
+      boardCache = null; // 다음에 랭킹 열 때 새로 불러오도록
+    } else {
+      rankStatus.textContent = "등록 실패: " + (j.reason || "알 수 없는 오류");
+      btn.disabled = false;
+    }
+  } catch (e) {
+    rankStatus.textContent = "서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요.";
+    btn.disabled = false;
+  }
+});
+
+/* ---- 명예의 전당 (랭킹 보기) ---- */
+const BOARD_DEFS = [
+  { key: "score",   label: "점수",        fmt: e => `${e.v}점` },
+  { key: "rescued", label: "최다 구출",   fmt: e => `${e.v}마리` },
+  { key: "combo",   label: "연속 구출",   fmt: e => `${e.v}연속` },
+  { key: "total",   label: "전체 정답률", fmt: e => `${e.v}% (${e.c}/${e.t})`, note: "전체 문제를 50문제 이상 푼 사람만 올라가요." },
+  { key: "u0",      label: "1단원",       fmt: e => `${e.v}% (${e.c}/${e.t})`, note: "이 단원 문제를 30문제 이상 푼 사람만 올라가요." },
+  { key: "u1",      label: "2단원",       fmt: e => `${e.v}% (${e.c}/${e.t})`, note: "이 단원 문제를 30문제 이상 푼 사람만 올라가요." },
+  { key: "u2",      label: "3단원",       fmt: e => `${e.v}% (${e.c}/${e.t})`, note: "이 단원 문제를 30문제 이상 푼 사람만 올라가요." },
+];
+let boardTab = "score";
+let boardCache = null, boardCacheAt = 0;
+
+function renderBoardTabs() {
+  boardTabs.innerHTML = "";
+  for (const d of BOARD_DEFS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = d.label;
+    if (d.key === boardTab) b.classList.add("on");
+    b.addEventListener("click", () => { boardTab = d.key; renderBoardTabs(); renderBoardList(); });
+    boardTabs.appendChild(b);
+  }
+}
+
+function renderBoardList() {
+  const def = BOARD_DEFS.find(d => d.key === boardTab);
+  boardNote.textContent = def.note || "";
+  if (!CONFIG.RANKING_URL) {
+    boardList.textContent = "아직 랭킹 서버가 연결되지 않았어요. (선생님: CONFIG.RANKING_URL 설정)";
+    return;
+  }
+  if (!boardCache) { boardList.textContent = "불러오는 중..."; return; }
+  const entries = (boardCache.boards && boardCache.boards[boardTab]) || [];
+  if (!entries.length) { boardList.textContent = "아직 기록이 없어요. 1등의 주인공이 되어 보세요!"; return; }
+  const medals = ["🥇", "🥈", "🥉"];
+  boardList.innerHTML = "<ol>" + entries.map((e, i) =>
+    `<li>${medals[i] || ""} <b>${escapeHtml(e.n)}</b> — ${def.fmt(e)}</li>`
+  ).join("") + "</ol>";
+}
+
+async function openBoardPanel(forceReload) {
+  boardPanel.classList.remove("hidden");
+  renderBoardTabs();
+  renderBoardList();
+  if (!CONFIG.RANKING_URL) return;
+  if (!forceReload && boardCache && Date.now() - boardCacheAt < 60000) return; // 1분 캐시
+  boardCache = null;
+  renderBoardList();
+  try {
+    const res = await fetch(CONFIG.RANKING_URL + "?action=board");
+    boardCache = await res.json();
+    boardCacheAt = Date.now();
+  } catch (e) {
+    boardList.textContent = "랭킹을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.";
+    return;
+  }
+  renderBoardList();
+}
+
+document.getElementById("board-open").addEventListener("click", () => openBoardPanel(false));
+document.getElementById("board-refresh").addEventListener("click", () => openBoardPanel(true));
+document.getElementById("board-close").addEventListener("click", hideBoardPanel);
 
 /* ============================================================
  * [12] 메인 루프 (dt 기반 → 기기 성능과 무관하게 동일 속도)
