@@ -91,13 +91,15 @@ const CONFIG = {
   SPEED_PER_RESCUE: 4,    // 아기 오리 1마리 구출마다 속도 증가량
   MAX_SPEED: 260,         // 최대 속도
 
-  // 대장 오리 스프라이트 시트 (mother_duck.png : 가로 6칸 x 세로 2칸 균일 격자)
+  // 오리 스프라이트 시트 (mother_duck.png / baby_duck.png : 가로 6칸 x 세로 2칸 균일 격자)
   SPRITE: {
     SRC: "mother_duck.png",
+    BABY_SRC: "baby_duck.png", // 아기 오리(꼬리 행렬)용 시트 — 격자 구조는 엄마와 동일
     COLS: 6,              // 가로 등분 수 → 1칸 너비 sWidth = 이미지 너비 / COLS (자동 계산)
     ROWS: 2,              // 세로 등분 수 → 1칸 높이 sHeight = 이미지 높이 / ROWS (자동 계산)
     FRAME_TIME: 0.2,      // 걷기 애니메이션 프레임 전환 간격 (초)
-    DRAW_H: 72,           // 화면에 그릴 세로 크기 (가상 px, 가로는 칸 비율에 맞춰 자동)
+    DRAW_H: 72,           // 엄마 오리를 화면에 그릴 세로 크기 (가상 px, 가로는 칸 비율 자동)
+    BABY_DRAW_H: 46,      // 아기 오리를 화면에 그릴 세로 크기 (가상 px)
     WHITE_THRESHOLD: 240, // R·G·B가 모두 이 값 이상인 픽셀은 흰 배경으로 보고 투명 처리
   },
 
@@ -506,11 +508,13 @@ class DuckSprite {
   // (x, y) 중심으로 현재 방향·프레임의 칸을 잘라 그린다.
   // drawH: 화면에 그릴 세로 크기. 가로는 칸의 원본 비율을 유지해 자동 계산.
   // 그리기에 성공하면 true (아직 로드 전이면 false → 호출부에서 도형 폴백)
-  draw(ctx, x, y, drawH, dirName) {
+  // frameOffset: 행렬 속 아기 오리들이 똑같이 발맞추지 않고 서로 다른
+  // 걸음 프레임으로 뒤뚱거리게 하는 어긋남 값 (기본 0)
+  draw(ctx, x, y, drawH, dirName, frameOffset = 0) {
     if (!this.ready) return false;
     const dn = dirName || this.dirName;
     const frames = this.anims[dn];
-    const f = frames[this.frameIndex % frames.length];
+    const f = frames[(this.frameIndex + frameOffset) % frames.length];
     const drawW = drawH * (this.sw / this.sh); // 칸 비율 유지
     const scale = drawH / this.sh;
     // 칸 안에서 그림이 치우친 만큼 반대로 밀어, 프레임이 바뀌어도 오리가 흔들리지 않게
@@ -530,6 +534,8 @@ class DuckSprite {
 }
 
 const duckSprite = new DuckSprite(CONFIG.SPRITE.SRC, CONFIG.SPRITE.COLS, CONFIG.SPRITE.ROWS);
+// 아기 오리(꼬리 행렬)용 시트 — 격자 구조·방향 배치가 엄마와 동일해 같은 클래스 재사용
+const babySprite = new DuckSprite(CONFIG.SPRITE.BABY_SRC, CONFIG.SPRITE.COLS, CONFIG.SPRITE.ROWS);
 
 /* ============================================================
  * [4] 좌표 보정 — 화면 좌표 → 캔버스 가상 좌표
@@ -1011,32 +1017,35 @@ function render(time) {
     }
   }
 
-  // ----- 아기 오리 행렬 -----
+  // ----- 아기 오리 행렬 (baby_duck.png 스프라이트) -----
   const tailPos = computeTailPositions();
   for (let i = tailPos.length - 1; i >= 0; i--) {
     const t = tailPos[i];
     const ahead = i === 0 ? duck : tailPos[i - 1];
-    const ang = Math.atan2(
-      wrapDelta(ahead.y - t.y, CONFIG.WORLD_H),
-      wrapDelta(ahead.x - t.x, CONFIG.WORLD_W)
-    );
+    const dxw = wrapDelta(ahead.x - t.x, CONFIG.WORLD_W);
+    const dyw = wrapDelta(ahead.y - t.y, CONFIG.WORLD_H);
+    // 앞 오리를 향하는 방향을 상하좌우 4방향으로 변환 → 시트의 해당 칸 사용
+    const dn = Math.abs(dxw) >= Math.abs(dyw)
+      ? (dxw < 0 ? "left" : "right")
+      : (dyw < 0 ? "up" : "down");
     const s = worldToScreen(t.x, t.y);
     const bob = Math.sin(time * 5 + i) * 2; // 둥실둥실
-    drawDuckShape(s.x, s.y + bob, CONFIG.DUCKLING_RADIUS, "#ffe9a8", ang);
+    if (!babySprite.draw(ctx, s.x, s.y + bob, CONFIG.SPRITE.BABY_DRAW_H, dn, i)) {
+      // 이미지 로드 전에는 기존 도형 오리로 폴백
+      drawDuckShape(s.x, s.y + bob, CONFIG.DUCKLING_RADIUS, "#ffe9a8", Math.atan2(dyw, dxw));
+    }
   }
 
-  // ----- 잃은 아기 오리 (빙글빙글 떠내려가며 사라짐) -----
+  // ----- 잃은 아기 오리 (흔들흔들 떠내려가며 사라짐) -----
   for (const l of lostDucks) {
     const s = worldToScreen(l.x, l.y);
     const a = 1 - l.age / CONFIG.LOST_DUCK_LIFE;
+    const lx = s.x + Math.sin(l.age * 6) * 8; // 좌우로 흔들흔들
+    const ly = s.y + l.age * 28;              // 아래로 떠내려감
     ctx.globalAlpha = Math.max(0, a) * 0.9;
-    drawDuckShape(
-      s.x + Math.sin(l.age * 6) * 8,     // 좌우로 흔들흔들
-      s.y + l.age * 28,                  // 아래로 떠내려감
-      CONFIG.DUCKLING_RADIUS,
-      "#ffe9a8",
-      l.age * 5                          // 빙글빙글 회전
-    );
+    if (!babySprite.draw(ctx, lx, ly, CONFIG.SPRITE.BABY_DRAW_H, "down")) {
+      drawDuckShape(lx, ly, CONFIG.DUCKLING_RADIUS, "#ffe9a8", l.age * 5);
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -1354,8 +1363,12 @@ function drawStartScreen() {
   if (!duckSprite.draw(ctx, CONFIG.W / 2 - 150, 96, 76, "down")) {
     drawDuckShape(CONFIG.W / 2 - 150, 96, 26, "#ffd21f", -0.2);
   }
-  drawDuckShape(CONFIG.W / 2 + 130, 86, 15, "#ffe9a8", Math.PI - 0.3);
-  drawDuckShape(CONFIG.W / 2 + 180, 112, 15, "#ffe9a8", Math.PI - 0.1);
+  if (!babySprite.draw(ctx, CONFIG.W / 2 + 130, 86, 44, "left", 0)) {
+    drawDuckShape(CONFIG.W / 2 + 130, 86, 15, "#ffe9a8", Math.PI - 0.3);
+  }
+  if (!babySprite.draw(ctx, CONFIG.W / 2 + 180, 112, 44, "left", 1)) {
+    drawDuckShape(CONFIG.W / 2 + 180, 112, 15, "#ffe9a8", Math.PI - 0.1);
+  }
   drawWolf(CONFIG.W / 2 + 260, 98, 17, Math.PI + 0.4, 0);
 
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1424,6 +1437,7 @@ function frame(now) {
   last = now;
   if (state === "playing") update(dt);
   duckSprite.update(dt); // 걷기 프레임 순환 (시작 화면 장식 오리도 함께 움직임)
+  babySprite.update(dt); // 아기 오리 걷기 프레임 순환
   updateFeedbacks(dt);
   render(now / 1000);
   requestAnimationFrame(frame);
