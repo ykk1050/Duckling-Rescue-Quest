@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -122,8 +122,8 @@ const CONFIG = {
   BOX_MIN_DIST_FROM_DUCK: 320, // 스폰 시 엄마 오리와의 최소 거리
   BOX_MIN_DIST_BETWEEN: 360,   // 상자끼리의 최소 거리 (맵에 흩어지게)
 
-  // 오답 페널티
-  WRONG_PENALTY: 1,       // 오답 시 잃는 아기 오리 수
+  // 오답 페널티: 틀린 상자에서 늑대가 튀어나온다!
+  // (첫 번째 문제를 틀리면 바로 게임 오버)
 
   // 장애물 (시간이 지날수록 하나씩 추가됨: 바위 → 늑대 → 바위 → ...)
   HAZARD_START_DELAY: 12, // 첫 장애물이 나타나는 시각 (초)
@@ -144,8 +144,21 @@ const CONFIG = {
   // 상단 질문 UI 영역 높이 (질문이 길면 2줄로 표시)
   UI_TOP: 100,
 
+  // 문제 제한 시간
+  QUESTION_TIME: 90,      // 한 문제를 풀 수 있는 시간 (초) = 1분 30초
+  TIME_WARN: 10,          // 남은 시간이 이 값 이하면 빨간색 경고
+
   // 조작
   SWIPE_THRESHOLD: 24,    // 스와이프 인식 최소 거리 (가상 px 기준 → 기기 무관 동일 감도)
+
+  // 가상 방향키 (터치 기기에서 표시되는 반투명 십자 패드)
+  DPAD: {
+    CX: 700,              // 패드 중심 x (가상 px, 화면 오른쪽 아래 구석)
+    CY: 490,              // 패드 중심 y
+    BTN: 52,              // 버튼 한 변 크기
+    GAP: 58,              // 중심에서 각 버튼 중심까지 거리
+    ALPHA: 0.38,          // 평소 투명도 (게임 화면을 가리지 않도록 반투명)
+  },
 
   // 피드백 텍스트
   FEEDBACK_LIFE: 1.1,     // 떠 있는 시간(초)
@@ -346,6 +359,7 @@ function nextQuestion() {
     choices: order.map(k => raw[1 + k]),
     answer: order.indexOf(raw[4]),
   };
+  questionTimeLeft = CONFIG.QUESTION_TIME; // 새 문제 → 제한 시간 리셋
 }
 
 /* ---- 단원별 정답률 (localStorage: 이 기기 브라우저에 계속 저장) ---- */
@@ -445,12 +459,20 @@ class DuckSprite {
     try {
       const data = octx.getImageData(0, 0, off.width, off.height);
       const px = data.data;
-      const th = CONFIG.SPRITE.WHITE_THRESHOLD;
-      for (let i = 0; i < px.length; i += 4) {
-        // R·G·B가 모두 기준값 이상 = 흰 배경 → 알파 0 (완전 투명)
-        if (px[i] >= th && px[i + 1] >= th && px[i + 2] >= th) px[i + 3] = 0;
+      // 이미 투명 배경인 이미지(알파 0 픽셀 존재)는 흰색 제거를 건너뛴다
+      // — 눈의 흰자위처럼 그림 '안쪽'의 흰색까지 뚫리는 것을 방지
+      let alreadyTransparent = false;
+      for (let i = 3; i < px.length; i += 4) {
+        if (px[i] === 0) { alreadyTransparent = true; break; }
       }
-      octx.putImageData(data, 0, 0);
+      if (!alreadyTransparent) {
+        const th = CONFIG.SPRITE.WHITE_THRESHOLD;
+        for (let i = 0; i < px.length; i += 4) {
+          // R·G·B가 모두 기준값 이상 = 흰 배경 → 알파 0 (완전 투명)
+          if (px[i] >= th && px[i + 1] >= th && px[i + 2] >= th) px[i + 3] = 0;
+        }
+        octx.putImageData(data, 0, 0);
+      }
       this.computeOffsets(data);
       return off;
     } catch (e) {
@@ -587,6 +609,8 @@ let state = "start";   // "start" | "playing" | "paused" | "gameover"
 let duck, dir, dirQueue, trail, rescued, boxes, feedbacks, speed;
 let cam = { x: 0, y: 0 };
 let rocks, wolves, gameTime, nextHazardAt, invulnUntil, gameOverReason;
+let questionsAnswered; // 이번 판에서 푼 문제 수 (첫 문제 오답 = 게임 오버 판정용)
+let questionTimeLeft = 0; // 현재 문제의 남은 시간 (초). 문제가 바뀔 때마다 리셋.
 let lostDucks; // 잃어서 떠내려가는 아기 오리 연출용
 
 const BUTTONS = {
@@ -623,6 +647,7 @@ function initGame() {
   nextHazardAt = CONFIG.HAZARD_START_DELAY;
   invulnUntil = 0;
   gameOverReason = "";
+  questionsAnswered = 0;
   lostDucks = [];
   spawnBoxes();
 }
@@ -725,6 +750,15 @@ canvas.addEventListener("pointerdown", (e) => {
     if (hitButton(BUTTONS.resume, p)) resumeGame();
     return;
   }
+  // 가상 방향키를 눌렀으면 방향 전환 (스와이프 시작으로 취급하지 않음)
+  if (SHOW_DPAD) {
+    const d = hitDpad(p);
+    if (d) {
+      setDir(d.x, d.y);
+      dpadFlash = { dir: d, until: performance.now() / 1000 + 0.2 };
+      return;
+    }
+  }
   swipe = { active: true, x: p.x, y: p.y };
 });
 
@@ -751,6 +785,32 @@ canvas.addEventListener("pointermove", (e) => {
 
 function hitButton(b, p) {
   return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+}
+
+/* ---- 가상 방향키 (터치 기기에서 표시되는 반투명 십자 패드) ---- */
+// 터치가 가능한 기기(스마트패드·폰·터치 노트북)에서만 표시
+let SHOW_DPAD = ("ontouchstart" in window) ||
+  (window.matchMedia && matchMedia("(pointer: coarse)").matches);
+const DPAD_DIRS = [
+  { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
+];
+let dpadFlash = { dir: null, until: 0 }; // 방금 누른 버튼을 잠깐 밝게 표시
+
+function dpadBtnCenter(d) {
+  return {
+    x: CONFIG.DPAD.CX + d.x * CONFIG.DPAD.GAP,
+    y: CONFIG.DPAD.CY + d.y * CONFIG.DPAD.GAP,
+  };
+}
+
+// 터치 지점이 어느 방향 버튼 위인지 (없으면 null). 손가락 오차를 위해 넉넉히 판정.
+function hitDpad(p) {
+  const half = CONFIG.DPAD.BTN / 2 + 8;
+  for (const d of DPAD_DIRS) {
+    const c = dpadBtnCenter(d);
+    if (Math.abs(p.x - c.x) <= half && Math.abs(p.y - c.y) <= half) return d;
+  }
+  return null;
 }
 
 function startGame() {
@@ -905,15 +965,44 @@ function update(dt) {
         addFeedback("+1 구출!", duckScreen.x, duckScreen.y - 34, "#1a9e3f");
       } else {
         recordAnswer(currentQ.unit, false);
-        // 오답 페널티: 아기 오리를 잃는다 (0마리면 잃을 게 없어 점수만 유지)
-        let lost = 0;
-        for (let i = 0; i < CONFIG.WRONG_PENALTY; i++) { if (loseDuckling()) lost++; }
-        if (lost > 0) addFeedback(`틀렸어! 아기 오리 -${lost}`, duckScreen.x, duckScreen.y - 34, "#d63031");
-        else          addFeedback("틀렸어!", duckScreen.x, duckScreen.y - 34, "#d63031");
+        // 첫 번째 문제를 틀리면 바로 게임 오버
+        if (questionsAnswered === 0) {
+          gameOverReason = "첫 번째 문제를 틀렸어요.";
+          state = "gameover";
+          break;
+        }
+        // 오답 페널티: 틀린 상자에서 늑대가 튀어나온다!
+        spawnWolfAt(b.cx, b.cy);
+        // 코앞에서 나온 늑대에게 바로 물리지 않도록 잠깐 무적 (도망갈 시간)
+        invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
+        addFeedback("틀렸어! 늑대가 튀어나왔다!", duckScreen.x, duckScreen.y - 34, "#d63031");
       }
+      questionsAnswered++;
       nextQuestion(); // 정답이든 오답이든 즉시 다음 문제로 (무작위 + 보기 섞기)
       spawnBoxes();
       break;
+    }
+  }
+
+  // ----- 문제 제한 시간 (1분 30초) -----
+  if (state === "playing") {
+    questionTimeLeft -= dt;
+    if (questionTimeLeft <= 0) {
+      recordAnswer(currentQ.unit, false); // 시간 초과 = 오답으로 기록
+      if (questionsAnswered === 0) {
+        // 첫 문제는 시간 초과도 게임 오버 (오답과 같은 규칙)
+        gameOverReason = "시간 안에 첫 문제를 풀지 못했어요.";
+        state = "gameover";
+      } else {
+        // 오답과 같은 페널티: 틀린 상자 자리에서 늑대가 튀어나온다
+        const wrongBox = boxes.find(b => b.choice !== currentQ.answer) || boxes[0];
+        spawnWolfAt(wrongBox.cx, wrongBox.cy);
+        invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
+        addFeedback("시간 초과! 늑대가 나타났다!", duckScreen.x, duckScreen.y - 34, "#d63031");
+        questionsAnswered++;
+        nextQuestion(); // 제한 시간도 함께 리셋된다
+        spawnBoxes();
+      }
     }
   }
 
@@ -951,6 +1040,21 @@ function update(dt) {
       break;
     }
   }
+}
+
+// 틀린 상자에서 늑대가 튀어나온다.
+// 이미 최대 마리 수라면 (오리에게서) 가장 먼 늑대가 이 자리로 순간이동.
+function spawnWolfAt(x, y) {
+  if (wolves.length < CONFIG.MAX_WOLVES) {
+    wolves.push({ x, y, ang: 0 });
+    return;
+  }
+  let farthest = wolves[0], fd = -1;
+  for (const w of wolves) {
+    const d = worldDist(duck.x, duck.y, w.x, w.y);
+    if (d > fd) { fd = d; farthest = w; }
+  }
+  farthest.x = x; farthest.y = y;
 }
 
 // 장애물 피격 공통 처리. 아기 오리가 있으면 1마리 잃고 무적, 없으면 게임 오버.
@@ -1120,8 +1224,35 @@ function render(time) {
   // ----- 상단 질문 UI -----
   drawTopBar(q);
 
+  // ----- 가상 방향키 (터치 기기, 플레이 중에만) -----
+  if (state === "playing" && SHOW_DPAD) drawDpad(time);
+
   if (state === "gameover") drawGameOverScreen();
   else if (state === "paused") drawPauseScreen();
+}
+
+// 반투명 십자 방향 패드 — 화면 오른쪽 아래, 게임을 가리지 않게 은은하게
+function drawDpad(time) {
+  const B = CONFIG.DPAD.BTN;
+  for (const d of DPAD_DIRS) {
+    const c = dpadBtnCenter(d);
+    const pressed = dpadFlash.dir === d && time < dpadFlash.until;
+    ctx.globalAlpha = pressed ? 0.85 : CONFIG.DPAD.ALPHA;
+    ctx.fillStyle = pressed ? "#ffd21f" : "#ffffff";
+    roundRect(c.x - B / 2, c.y - B / 2, B, B, 12); ctx.fill();
+    ctx.strokeStyle = "#16324a"; ctx.lineWidth = 2;
+    roundRect(c.x - B / 2, c.y - B / 2, B, B, 12); ctx.stroke();
+    // 방향 화살표 (삼각형)
+    ctx.fillStyle = "#16324a";
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(Math.atan2(d.y, d.x));
+    ctx.beginPath();
+    ctx.moveTo(11, 0); ctx.lineTo(-7, -11); ctx.lineTo(-7, 11);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawWater(time) {
@@ -1317,6 +1448,17 @@ function drawTopBar(q) {
   ctx.textAlign = "right";
   ctx.fillStyle = "#ffe9a8";
   ctx.fillText(`구출한 아기 오리: ${rescued}마리`, CONFIG.W - 14, CONFIG.UI_TOP - 18);
+
+  // 가운데 = 남은 시간 (10초 이하면 빨갛게 깜빡이며 경고)
+  const t = Math.max(0, Math.ceil(questionTimeLeft));
+  const mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, "0");
+  const danger = questionTimeLeft <= CONFIG.TIME_WARN;
+  ctx.textAlign = "center";
+  ctx.font = `bold 18px ${FONT}`;
+  ctx.fillStyle = danger
+    ? (Math.floor(questionTimeLeft * 3) % 2 === 0 ? "#ff6b6b" : "#ffd21f")
+    : "#ffffff";
+  ctx.fillText(`⏱ ${mm}:${ss}`, CONFIG.W / 2, CONFIG.UI_TOP - 18);
 }
 
 // 질문을 1~2줄로 자동 배치: 한 줄로 안 들어가면 가운데 공백에서 나누고,
@@ -1425,12 +1567,12 @@ function drawStartScreen() {
 
   ctx.font = `18px ${FONT}`;
   ctx.fillStyle = "#ffffff";
-  ctx.fillText("PC: 방향키  /  패드·폰: 화면을 원하는 방향으로 슥~ 밀기(스와이프)", CONFIG.W / 2, 244);
+  ctx.fillText("PC: 방향키 / 패드·폰: 화면 구석의 방향 버튼 또는 스와이프 · 한 문제당 1분 30초!", CONFIG.W / 2, 244);
   ctx.fillText("넓은 연못 속 정답 상자에 부딪히면 아기 오리 구출! (화살표가 위치 안내)", CONFIG.W / 2, 270);
   ctx.fillStyle = "#ffcf9e";
-  ctx.fillText("틀린 상자·바위·늑대에 부딪히면 아기 오리 한 마리를 잃어요!", CONFIG.W / 2, 296);
+  ctx.fillText("틀린 상자에서는 늑대가 튀어나와요! 바위·늑대에 닿으면 아기 오리 -1!", CONFIG.W / 2, 296);
   ctx.fillStyle = "#ffb3b3";
-  ctx.fillText("아기 오리가 없을 때 늑대·바위에 닿거나, 행렬에 부딪히면 게임 오버!", CONFIG.W / 2, 322);
+  ctx.fillText("첫 문제를 틀리거나, 행렬에 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!", CONFIG.W / 2, 322);
 
   // 단원별 누적 정답률 (localStorage에 저장된 기록)
   ctx.font = `bold 20px ${FONT}`;
