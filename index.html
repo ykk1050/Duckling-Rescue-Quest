@@ -91,6 +91,16 @@ const CONFIG = {
   SPEED_PER_RESCUE: 4,    // 아기 오리 1마리 구출마다 속도 증가량
   MAX_SPEED: 260,         // 최대 속도
 
+  // 대장 오리 스프라이트 시트 (mother_duck.png : 가로 6칸 x 세로 2칸 균일 격자)
+  SPRITE: {
+    SRC: "mother_duck.png",
+    COLS: 6,              // 가로 등분 수 → 1칸 너비 sWidth = 이미지 너비 / COLS (자동 계산)
+    ROWS: 2,              // 세로 등분 수 → 1칸 높이 sHeight = 이미지 높이 / ROWS (자동 계산)
+    FRAME_TIME: 0.2,      // 걷기 애니메이션 프레임 전환 간격 (초)
+    DRAW_H: 62,           // 화면에 그릴 세로 크기 (가상 px, 가로는 칸 비율에 맞춰 자동)
+    WHITE_THRESHOLD: 240, // R·G·B가 모두 이 값 이상인 픽셀은 흰 배경으로 보고 투명 처리
+  },
+
   // 아기 오리(꼬리)
   DUCKLING_RADIUS: 10,    // 아기 오리 반지름
   TAIL_SPACING: 34,       // 행렬 간격 (가상 px)
@@ -376,6 +386,105 @@ const VIEW_CX = CONFIG.W / 2;
 const VIEW_CY = CONFIG.UI_TOP + (CONFIG.H - CONFIG.UI_TOP) / 2;
 
 /* ============================================================
+ * [3.5] 대장 오리 스프라이트 시트 (mother_duck.png)
+ *   - 이미지를 파일로 쪼개지 않고 ctx.drawImage(img, sx, sy, sW, sH, dx, dy, dW, dH)
+ *     소스 크롭으로 필요한 칸만 실시간으로 잘라 그린다.
+ *   - 1칸 크기(sWidth/sHeight)는 로드된 원본 크기를 COLS/ROWS로 나눠 자동 계산.
+ *   - 로드 직후 흰 배경(R·G·B ≥ WHITE_THRESHOLD)을 투명 처리(크로마키)한
+ *     오프스크린 캔버스를 만들어 두고, 매 프레임 그 캔버스에서 잘라 그린다.
+ * ============================================================ */
+class DuckSprite {
+  constructor(src, cols, rows) {
+    this.cols = cols;
+    this.rows = rows;
+    this.ready = false;      // 이미지 로드+가공 완료 여부 (전엔 도형 폴백)
+    this.dirName = "right";  // 현재 바라보는 방향
+    this.frameIndex = 0;     // 현재 걷기 프레임
+    this.timer = 0;          // 프레임 전환 타이머(초)
+
+    // 방향별로 사용할 격자 칸 목록 [열 c, 행 r]
+    // 1행(r=0): 정면/오른쪽 | 2행(r=1): 뒷모습/왼쪽
+    this.anims = {
+      down:  [{ c: 0, r: 0 }, { c: 1, r: 0 }],                 // 정면 걷기
+      right: [{ c: 2, r: 0 }, { c: 3, r: 0 }],                 // 오른쪽 걷기
+      up:    [{ c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }], // 뒷모습 걷기 (기본)
+      left:  [{ c: 3, r: 1 }, { c: 4, r: 1 }, { c: 5, r: 1 }], // 왼쪽 걷기
+      upAlt: [{ c: 4, r: 0 }, { c: 5, r: 0 }],                 // 예비: 오른쪽 대각선 위
+    };
+
+    const img = new Image();
+    img.onload = () => {
+      this.sw = img.width  / this.cols;  // sWidth  자동 계산
+      this.sh = img.height / this.rows;  // sHeight 자동 계산
+      this.sheet = this.makeTransparent(img);
+      this.ready = true;
+    };
+    img.src = src;
+  }
+
+  // 흰 배경 → 투명 (크로마키). 픽셀을 한 번만 가공해 두고 계속 재사용한다.
+  makeTransparent(img) {
+    const off = document.createElement("canvas");
+    off.width = img.width; off.height = img.height;
+    const octx = off.getContext("2d");
+    octx.drawImage(img, 0, 0);
+    try {
+      const data = octx.getImageData(0, 0, off.width, off.height);
+      const px = data.data;
+      const th = CONFIG.SPRITE.WHITE_THRESHOLD;
+      for (let i = 0; i < px.length; i += 4) {
+        // R·G·B가 모두 기준값 이상 = 흰 배경 → 알파 0 (완전 투명)
+        if (px[i] >= th && px[i + 1] >= th && px[i + 2] >= th) px[i + 3] = 0;
+      }
+      octx.putImageData(data, 0, 0);
+      return off;
+    } catch (e) {
+      // file:// 로 직접 열면 보안 정책 때문에 픽셀 접근이 막힐 수 있음
+      // → 투명화 없이 원본 이미지 그대로 사용 (게임은 정상 동작)
+      console.warn("스프라이트 투명화 실패(로컬 보안 정책). 로컬 서버로 열면 배경이 투명해집니다.", e);
+      return img;
+    }
+  }
+
+  // 이동 방향 벡터 → 방향 이름. 방향이 바뀌면 걷기 프레임을 처음부터 다시 시작.
+  setDirFromVector(dx, dy) {
+    const name = dy > 0 ? "down" : dy < 0 ? "up" : dx < 0 ? "left" : "right";
+    if (name !== this.dirName) {
+      this.dirName = name;
+      this.frameIndex = 0;
+      this.timer = 0;
+    }
+  }
+
+  // FRAME_TIME(0.2초)마다 배정된 칸들을 순환 → 뒤뚱뒤뚱 걷기 모션
+  update(dt) {
+    this.timer += dt;
+    while (this.timer >= CONFIG.SPRITE.FRAME_TIME) {
+      this.timer -= CONFIG.SPRITE.FRAME_TIME;
+      this.frameIndex++;
+    }
+  }
+
+  // (x, y) 중심으로 현재 방향·프레임의 칸을 잘라 그린다.
+  // drawH: 화면에 그릴 세로 크기. 가로는 칸의 원본 비율을 유지해 자동 계산.
+  // 그리기에 성공하면 true (아직 로드 전이면 false → 호출부에서 도형 폴백)
+  draw(ctx, x, y, drawH, dirName) {
+    if (!this.ready) return false;
+    const frames = this.anims[dirName || this.dirName];
+    const f = frames[this.frameIndex % frames.length];
+    const drawW = drawH * (this.sw / this.sh); // 칸 비율 유지
+    ctx.drawImage(
+      this.sheet,
+      f.c * this.sw, f.r * this.sh, this.sw, this.sh, // 소스 크롭 (sx, sy, sW, sH)
+      x - drawW / 2, y - drawH / 2, drawW, drawH      // 목적지 (dx, dy, dW, dH)
+    );
+    return true;
+  }
+}
+
+const duckSprite = new DuckSprite(CONFIG.SPRITE.SRC, CONFIG.SPRITE.COLS, CONFIG.SPRITE.ROWS);
+
+/* ============================================================
  * [4] 좌표 보정 — 화면 좌표 → 캔버스 가상 좌표
  *     getBoundingClientRect()로 실제 표시 크기를 얻어
  *     가상 해상도와의 비율로 환산한다. (레터박스/축소 화면 대응)
@@ -642,6 +751,9 @@ function update(dt) {
     pendingDir = null;
   }
 
+  // 스프라이트 시트 방향 동기화 (이동 방향에 맞는 행/열 세트 선택)
+  duckSprite.setDirFromVector(dir.x, dir.y);
+
   // 이동 (속도는 가상 해상도 기준 px/초 → 어떤 기기든 동일한 난이도)
   const step = speed * dt;
   duck.x = mod(duck.x + dir.x * step, CONFIG.WORLD_W); // 맵 끝 → 반대편 (벽 통과)
@@ -872,12 +984,15 @@ function render(time) {
     ctx.globalAlpha = 1;
   }
 
-  // ----- 엄마 오리 (피격 무적 중에는 깜빡깜빡) -----
+  // ----- 엄마 오리 (스프라이트 시트 크롭 / 피격 무적 중에는 깜빡깜빡) -----
   const ds = worldToScreen(duck.x, duck.y);
   const invincible = state === "playing" && gameTime < invulnUntil;
   if (!invincible || Math.floor(time * 8) % 2 === 0) {
     ctx.globalAlpha = invincible ? 0.6 : 1;
-    drawDuckShape(ds.x, ds.y, CONFIG.DUCK_RADIUS, "#ffd21f", Math.atan2(dir.y, dir.x));
+    if (!duckSprite.draw(ctx, ds.x, ds.y, CONFIG.SPRITE.DRAW_H)) {
+      // 이미지 로드 전에는 기존 도형 오리로 폴백
+      drawDuckShape(ds.x, ds.y, CONFIG.DUCK_RADIUS, "#ffd21f", Math.atan2(dir.y, dir.x));
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -1179,8 +1294,10 @@ function drawOverlay() {
 
 function drawStartScreen() {
   drawOverlay();
-  // 장식용 오리와 늑대
-  drawDuckShape(CONFIG.W / 2 - 150, 96, 26, "#ffd21f", -0.2);
+  // 장식용 오리와 늑대 (대장 오리는 스프라이트가 준비되면 실제 모습으로)
+  if (!duckSprite.draw(ctx, CONFIG.W / 2 - 150, 96, 76, "down")) {
+    drawDuckShape(CONFIG.W / 2 - 150, 96, 26, "#ffd21f", -0.2);
+  }
   drawDuckShape(CONFIG.W / 2 + 130, 86, 15, "#ffe9a8", Math.PI - 0.3);
   drawDuckShape(CONFIG.W / 2 + 180, 112, 15, "#ffe9a8", Math.PI - 0.1);
   drawWolf(CONFIG.W / 2 + 260, 98, 17, Math.PI + 0.4, 0);
@@ -1250,6 +1367,7 @@ function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05); // 탭 전환 등 큰 dt 방지
   last = now;
   if (state === "playing") update(dt);
+  duckSprite.update(dt); // 걷기 프레임 순환 (시작 화면 장식 오리도 함께 움직임)
   updateFeedbacks(dt);
   render(now / 1000);
   requestAnimationFrame(frame);
