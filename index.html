@@ -135,7 +135,7 @@
 <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
 
 <!-- 하단 크레딧 -->
-<div id="credit">Created by gamtudyssam using AI 0.00071</div>
+<div id="credit">Created by gamtudyssam using AI 0.00072</div>
 
 <!-- 랭킹 보기 버튼 (BGM 위젯 옆) -->
 <button id="board-open" type="button">🏆 랭킹</button>
@@ -343,7 +343,7 @@ const UNITS = [
     ["고종 황제가 대한 제국 칙령 제41호를 통해 독도를 울릉도의 부속 섬으로 명시한 것을 기념하여 매년 10월 25일로 지정된 날은?", "국토의 날", "독도의 날", "동해의 날", 1],
     ["지형에 따른 생활 모습으로 틀린 것은?", "평야-농사", "해안-어업", "산지-대규모 논농사", 2],
     ["독도가 소중한 까닭이 아닌 것은?", "우리 영토이기 때문", "자원이 풍부해서", "면적이 아시아에서 가장 넓어서", 2],
-    ["우리나라 큰 하천의 상류는 주로 어느 쪽에 있나요?", "동쪽(산지 쪽)", "서쪽", "남쪽", 0],
+    ["우리나라 큰 하천의 상류는 주로 어느 쪽에 있나요?", "동쪽", "서쪽", "남쪽", 0],
     ["우리나라 지형은 북쪽과 동쪽이 높고 남쪽과 서쪽이 낮은데, 이러한 특징을 무엇이라고 하나요?", "남고북저", "동고서저", "동저서고", 1],
   ]},
   { name: "2단원", title: "우리나라의 기후와 인구", questions: [
@@ -1730,16 +1730,16 @@ function drawStartScreen() {
   ctx.fillText("아기 오리 구출 대작전", CONFIG.W / 2, 164);
   ctx.font = `bold 20px ${FONT}`;
   ctx.fillStyle = "#aad4ee";
-  ctx.fillText("초등 5학년 1학기 사회 · 스네이크 게임", CONFIG.W / 2, 202);
+  ctx.fillText("초등 5학년 1학기 사회", CONFIG.W / 2, 202);
 
   ctx.font = `18px ${FONT}`;
   ctx.fillStyle = "#ffffff";
   ctx.fillText("PC: 방향키 / 패드·폰: 화면 구석의 방향 버튼 또는 스와이프 · 한 문제당 1분 30초!", CONFIG.W / 2, 244);
   ctx.fillText("넓은 연못 속 정답 상자에 부딪히면 아기 오리 구출! (화살표가 위치 안내)", CONFIG.W / 2, 270);
   ctx.fillStyle = "#ffcf9e";
-  ctx.fillText("틀린 상자에서는 늑대가 튀어나와요! 바위·늑대에 닿으면 아기 오리 -1!", CONFIG.W / 2, 296);
+  ctx.fillText("틀린 상자에서는 늑대가 튀어나와요! 바위·늑대에 닿으면 아기 오리가 잡혀가거나 여러 마리가 도망가요!", CONFIG.W / 2, 296);
   ctx.fillStyle = "#ffb3b3";
-  ctx.fillText("첫 문제를 틀리거나, 행렬에 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!", CONFIG.W / 2, 322);
+  ctx.fillText("첫 문제를 틀리거나, 아기 오리와 대장 오리가 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!", CONFIG.W / 2, 322);
 
   // 단원별 누적 정답률 (localStorage에 저장된 기록)
   ctx.font = `bold 20px ${FONT}`;
