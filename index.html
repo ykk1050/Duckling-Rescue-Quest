@@ -145,7 +145,7 @@
 <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
 
 <!-- 하단 크레딧 -->
-<div id="credit">Created by gamtudyssam using AI 0.0008</div>
+<div id="credit">Created by gamtudyssam using AI 0.0009</div>
 
 <!-- 랭킹 보기 버튼 (BGM 위젯 옆) -->
 <button id="board-open" type="button">🏆 랭킹</button>
@@ -247,8 +247,10 @@ const CONFIG = {
   // 장애물 (시간이 지날수록 하나씩 추가됨: 바위 → 늑대 → 바위 → ...)
   HAZARD_START_DELAY: 12, // 첫 장애물이 나타나는 시각 (초)
   HAZARD_INTERVAL: 14,    // 이후 장애물 추가 간격 (초)
-  MAX_ROCKS: 5,           // 바위 최대 개수
-  MAX_WOLVES: 3,          // 늑대 최대 마리 수
+  MAX_ROCKS: 10,          // 바위 최대 개수
+  MAX_WOLVES: 50,         // 늑대 최대 마리 수
+  HAZARD_AHEAD_SPREAD: 220,   // 진행 방향 스폰 시 기본 거리(HAZARD_MIN_DIST)에 더해지는 무작위 거리
+  HAZARD_AHEAD_ANGLE: 0.7,    // 진행 방향에서 좌우로 벌어질 수 있는 최대 각도(라디안, 약 ±40도)
   ROCK_RADIUS: 26,        // 바위 반지름
   WOLF_RADIUS: 17,        // 늑대 반지름
   WOLF_SPEED: 105,        // 늑대 추격 속도의 시작값 (오리보다 느려서 도망칠 수 있음)
@@ -837,20 +839,36 @@ function spawnBoxes() {
   }
 }
 
+// 오리의 진행 방향 앞쪽, 일정 거리 떨어진 부채꼴 안의 무작위 지점을 고른다.
+// (기존 상자·바위와 너무 가까우면 각도·거리를 바꿔 다시 시도)
+function spawnAheadPos(avoidList, avoidDist) {
+  const baseAng = Math.atan2(dir.y, dir.x); // 오리가 나아가는 방향
+  let x, y, tries = 0;
+  do {
+    const ang = baseAng + (Math.random() - 0.5) * 2 * CONFIG.HAZARD_AHEAD_ANGLE;
+    const dist = CONFIG.HAZARD_MIN_DIST + Math.random() * CONFIG.HAZARD_AHEAD_SPREAD;
+    x = mod(duck.x + Math.cos(ang) * dist, CONFIG.WORLD_W);
+    y = mod(duck.y + Math.sin(ang) * dist, CONFIG.WORLD_H);
+    tries++;
+  } while (tries < 60 && avoidList.some(o => worldDist(x, y, o.x, o.y) < avoidDist));
+  return { x, y };
+}
+
 // 시간이 지나면 바위 → 늑대 → 바위 → ... 순서로 하나씩 추가
+// 스폰 위치는 오리의 진행 방향 앞쪽(일정 거리 밖)이라, 계속 달리다 보면 마주치게 된다.
 function spawnHazard() {
   const total = rocks.length + wolves.length;
   const wantWolf = total % 2 === 1; // 홀수 번째(2,4,...)는 늑대
   const avoid = rocks.concat(boxes.map(b => ({ x: b.cx, y: b.cy })));
   if (wantWolf && wolves.length < CONFIG.MAX_WOLVES) {
-    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 150);
+    const p = spawnAheadPos(avoid, 150);
     wolves.push({ x: p.x, y: p.y, ang: 0 });
     addFeedback("늑대가 나타났다!", VIEW_CX, VIEW_CY - 90, "#d63031");
   } else if (rocks.length < CONFIG.MAX_ROCKS) {
-    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 180);
+    const p = spawnAheadPos(avoid, 180);
     rocks.push({ x: p.x, y: p.y, r: CONFIG.ROCK_RADIUS });
   } else if (wolves.length < CONFIG.MAX_WOLVES) {
-    const p = randomWorldPos(CONFIG.HAZARD_MIN_DIST, avoid, 150);
+    const p = spawnAheadPos(avoid, 150);
     wolves.push({ x: p.x, y: p.y, ang: 0 });
     addFeedback("늑대가 나타났다!", VIEW_CX, VIEW_CY - 90, "#d63031");
   }
