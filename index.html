@@ -82,6 +82,16 @@
     font: bold 15px 'Malgun Gothic', sans-serif; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
+
+  /* ===== 일시정지 버튼 (플레이 중에만 표시, BGM·랭킹 위젯 옆) ===== */
+  #pause-btn {
+    position: fixed; bottom: 10px; left: 250px; z-index: 1000;
+    height: 48px; padding: 0 16px; border: none; border-radius: 24px;
+    background: rgba(10, 30, 50, 0.6); color: #d9ecf7;
+    font: bold 15px 'Malgun Gothic', sans-serif; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    display: none; /* 플레이 중에만 JS가 보여준다 */
+  }
   .ovl {
     position: fixed; inset: 0; z-index: 1001;
     display: flex; align-items: center; justify-content: center;
@@ -135,10 +145,13 @@
 <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
 
 <!-- 하단 크레딧 -->
-<div id="credit">Created by gamtudyssam using AI 0.00076</div>
+<div id="credit">Created by gamtudyssam using AI 0.0008</div>
 
 <!-- 랭킹 보기 버튼 (BGM 위젯 옆) -->
 <button id="board-open" type="button">🏆 랭킹</button>
+
+<!-- 일시정지 버튼 (플레이 중에만 표시) -->
+<button id="pause-btn" type="button">⏸ 일시정지</button>
 
 <!-- 게임오버: 랭킹 등록 창 -->
 <div id="rank-panel" class="ovl hidden">
@@ -238,7 +251,11 @@ const CONFIG = {
   MAX_WOLVES: 3,          // 늑대 최대 마리 수
   ROCK_RADIUS: 26,        // 바위 반지름
   WOLF_RADIUS: 17,        // 늑대 반지름
-  WOLF_SPEED: 105,        // 늑대 추격 속도 (오리보다 느려서 도망칠 수 있음)
+  WOLF_SPEED: 105,        // 늑대 추격 속도의 시작값 (오리보다 느려서 도망칠 수 있음)
+  WOLF_SPEED_STEP: 6,     // 실수(오답·시간초과·바위·늑대 피격) 1번마다 늑대 속도 증가량
+  WOLF_SPEED_MAX: 162,    // 늑대 최고 속도 한계점.
+                          // 오리 기본 속도(170)보다 살짝 느리게 잡아, 잠깐만 집중을
+                          // 놓쳐도 금방 따라잡히지만 절대 못 도망치는 정도는 아니다.
   HAZARD_MIN_DIST: 420,   // 장애물 스폰 시 오리와의 최소 거리
   HIT_INVINCIBLE: 1.5,    // 장애물 피격 후 무적 시간 (초)
   WOLF_WARN_DIST: 520,    // 화면 밖 늑대 경고 화살표를 띄우는 거리
@@ -741,6 +758,8 @@ let maxRescued;  // 이번 판 한 번에 가장 많이 데리고 다닌 아기 
 let gameCorrect; // 이번 판 맞힌 문제 수
 let gameWrong;   // 이번 판 틀린 문제 수 (시간 초과 포함)
 let gameStartMs; // 이번 판 시작 시각 (플레이 시간 계산용)
+let wolfSpeed;   // 늑대의 현재 추격 속도 — 실수할 때마다 빨라진다 (WOLF_SPEED_MAX까지)
+let saveTick = 0; // 자동 저장 타이머 (새로고침 이어하기용)
 
 const BUTTONS = {
   start:   { x: CONFIG.W/2 - 110, y: 468, w: 220, h: 62, label: "게임 시작" },
@@ -785,6 +804,7 @@ function initGame() {
   gameCorrect = 0;
   gameWrong = 0;
   gameStartMs = Date.now();
+  wolfSpeed = CONFIG.WOLF_SPEED;
   spawnBoxes();
 }
 
@@ -1014,6 +1034,7 @@ function pauseGame() {
   state = "paused";
   bgmAutoPaused = !bgm.paused;     // 재개할 때 음악을 다시 켤지 기억
   bgm.pause();
+  saveGame(); // 멈추는 순간의 상태를 저장 → 새로 고침해도 이어서 하기 가능
 }
 
 function resumeGame() {
@@ -1023,6 +1044,7 @@ function resumeGame() {
   state = "playing";
   if (bgmAutoPaused && !bgmUserPaused) bgm.play().catch(() => {});
   bgmAutoPaused = false;
+  playBgm(); // 새로 고침 복원 후 재개하는 경우에도 음악이 이어지도록 (수동 정지면 무시됨)
 }
 
 // 탭 전환·앱 전환·창 최소화 감지
@@ -1032,11 +1054,74 @@ document.addEventListener("visibilitychange", () => {
 // 다른 창을 클릭해 포커스를 잃었을 때 (탭은 그대로 보여도 조작 불가 상태)
 window.addEventListener("blur", pauseGame);
 
+// 일시정지 버튼 (플레이 중에만 보임 — 표시 여부는 메인 루프에서 갱신)
+const pauseBtn = document.getElementById("pause-btn");
+pauseBtn.addEventListener("click", pauseGame);
+
+/* ---- 새로 고침 이어하기: 게임 상태 저장/복원 (localStorage) ----
+   플레이 중 2초마다 + 일시정지·창 닫기 순간에 스냅샷을 저장해 두고,
+   페이지를 다시 열면 '이어서 하기' 화면(일시정지 상태)으로 복원한다.
+   게임 오버가 되면 저장본을 지운다. */
+const SAVE_KEY = "duckRescueSave_v1";
+
+function saveGame() {
+  if (state !== "playing" && state !== "paused") return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      v: 1,
+      duck, cam, dir,
+      // 궤적은 좌표를 반올림해 용량 절약 (아기 오리 행렬 복원용)
+      trail: trail.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.d * 100) / 100]),
+      rescued, score, combo, maxCombo, maxRescued, gameCorrect, gameWrong,
+      questionsAnswered, gameTime, nextHazardAt, invulnUntil, questionTimeLeft,
+      speed, wolfSpeed, boxes, rocks,
+      wolves: wolves.map(w => ({ x: w.x, y: w.y, ang: w.ang })),
+      currentQ, lastPick,
+      elapsedMs: Date.now() - gameStartMs,
+    }));
+  } catch (e) {}
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+// 저장본이 있으면 게임 상태를 통째로 복원하고 true를 반환
+function tryRestoreGame() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return false; }
+  if (!s || s.v !== 1 || !s.currentQ || !s.boxes) return false;
+  try {
+    duck = s.duck; cam = s.cam; dir = s.dir; dirQueue = [];
+    trail = (s.trail || []).map(a => ({ x: a[0], y: a[1], d: a[2] }));
+    rescued = s.rescued; score = s.score; combo = s.combo;
+    maxCombo = s.maxCombo; maxRescued = s.maxRescued;
+    gameCorrect = s.gameCorrect; gameWrong = s.gameWrong;
+    questionsAnswered = s.questionsAnswered;
+    gameTime = s.gameTime; nextHazardAt = s.nextHazardAt; invulnUntil = s.invulnUntil;
+    questionTimeLeft = s.questionTimeLeft; speed = s.speed;
+    wolfSpeed = s.wolfSpeed || CONFIG.WOLF_SPEED;
+    boxes = s.boxes; rocks = s.rocks; wolves = s.wolves;
+    currentQ = s.currentQ; lastPick = s.lastPick;
+    feedbacks = []; lostDucks = [];
+    gameStartMs = Date.now() - (s.elapsedMs || 0);
+    return true;
+  } catch (e) { return false; }
+}
+
+// 창을 닫거나 새로 고침하는 순간에도 저장 (모바일은 pagehide가 더 확실)
+window.addEventListener("beforeunload", saveGame);
+window.addEventListener("pagehide", saveGame);
+
 /* ============================================================
  * [9] 게임 로직 업데이트
  * ============================================================ */
 function update(dt) {
   gameTime += dt;
+
+  // 2초마다 자동 저장 → 새로 고침해도 '이어서 하기'로 복원된다
+  saveTick += dt;
+  if (saveTick >= 2) { saveTick = 0; saveGame(); }
 
   // 시간 경과에 따른 장애물 추가
   if (gameTime >= nextHazardAt) {
@@ -1073,8 +1158,8 @@ function update(dt) {
     const dy = wrapDelta(duck.y - w.y, CONFIG.WORLD_H);
     const d = Math.hypot(dx, dy) || 1;
     w.ang = Math.atan2(dy, dx);
-    w.x = mod(w.x + (dx / d) * CONFIG.WOLF_SPEED * dt, CONFIG.WORLD_W);
-    w.y = mod(w.y + (dy / d) * CONFIG.WOLF_SPEED * dt, CONFIG.WORLD_H);
+    w.x = mod(w.x + (dx / d) * wolfSpeed * dt, CONFIG.WORLD_W);
+    w.y = mod(w.y + (dy / d) * wolfSpeed * dt, CONFIG.WORLD_H);
   }
 
   // 이동 궤적 기록 (아기 오리들이 이 길을 따라온다)
@@ -1125,6 +1210,7 @@ function update(dt) {
         // 코앞에서 나온 늑대에게 바로 물리지 않도록 잠깐 무적 (도망갈 시간)
         invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
         addFeedback(`틀렸어! -${CONFIG.SCORE_WRONG}점, 늑대 등장!`, duckScreen.x, duckScreen.y - 34, "#d63031");
+        boostWolves(); // 실수 → 늑대가 힘을 낸다!
       }
       questionsAnswered++;
       nextQuestion(); // 정답이든 오답이든 즉시 다음 문제로 (무작위 + 보기 섞기)
@@ -1150,6 +1236,7 @@ function update(dt) {
         spawnWolfAt(wrongBox.cx, wrongBox.cy);
         invulnUntil = Math.max(invulnUntil, gameTime + CONFIG.HIT_INVINCIBLE);
         addFeedback(`시간 초과! -${CONFIG.SCORE_WRONG}점, 늑대 등장!`, duckScreen.x, duckScreen.y - 34, "#d63031");
+        boostWolves(); // 실수 → 늑대가 힘을 낸다!
         questionsAnswered++;
         nextQuestion(); // 제한 시간도 함께 리셋된다
         spawnBoxes();
@@ -1192,10 +1279,11 @@ function update(dt) {
   }
 }
 
-// 게임 오버 공통 처리: 사유 기록 + 랭킹 등록 창 열기
+// 게임 오버 공통 처리: 사유 기록 + 저장본 삭제 + 랭킹 등록 창 열기
 function endGame(reason) {
   gameOverReason = reason;
   state = "gameover";
+  clearSave(); // 끝난 판은 이어하기 대상이 아니므로 저장본 삭제
   showRankPanel();
 }
 
@@ -1233,7 +1321,17 @@ function hitHazard(kind, overReason, duckScreen) {
   addFeedback(
     kind === "wolf" ? `늑대에게 ${lost}마리 뺏김! -${pts}점` : `쿵! 아기 오리 -1 · -${pts}점`,
     duckScreen.x, duckScreen.y - 34, "#d63031");
+  boostWolves(); // 실수 → 늑대가 힘을 낸다!
   return true;
+}
+
+// 실수(오답·시간초과·바위·늑대 피격)할 때마다 늑대가 힘을 내서 빨라진다.
+// WOLF_SPEED_MAX에 도달하면 더는 빨라지지 않는다.
+function boostWolves() {
+  if (wolfSpeed >= CONFIG.WOLF_SPEED_MAX) return; // 이미 전속력
+  wolfSpeed = Math.min(CONFIG.WOLF_SPEED_MAX, wolfSpeed + CONFIG.WOLF_SPEED_STEP);
+  // 화면 가운데에 경고 (오리 위치 피드백과 겹치지 않게 아래쪽 + 작은 글씨)
+  addFeedback("늑대가 힘을 내었다! 늑대의 속도가 빨라졌다!", VIEW_CX, VIEW_CY + 60, "#b45309", 22);
 }
 
 // 행렬 맨 끝의 아기 오리 1마리를 잃는다. 그 자리에서 떠내려가는 연출을 남긴다.
@@ -1276,11 +1374,11 @@ function circleRectHit(cx, cy, r, b) {
 /* ============================================================
  * [10] 실시간 피드백 텍스트 — 화면 좌표 기준
  * ============================================================ */
-function addFeedback(text, x, y, color) {
+function addFeedback(text, x, y, color, size) {
   // 화면 밖으로 잘리지 않게 위치 보정
   x = Math.max(120, Math.min(CONFIG.W - 120, x));
   y = Math.max(CONFIG.UI_TOP + 50, Math.min(CONFIG.H - 30, y));
-  feedbacks.push({ text, x, y, color, age: 0 });
+  feedbacks.push({ text, x, y, color, size: size || 34, age: 0 });
 }
 
 function updateFeedbacks(dt) {
@@ -1378,7 +1476,7 @@ function render(time) {
   for (const f of feedbacks) {
     const a = 1 - f.age / CONFIG.FEEDBACK_LIFE;
     ctx.globalAlpha = Math.max(0, a);
-    ctx.font = `bold 34px ${FONT}`;
+    ctx.font = `bold ${f.size || 34}px ${FONT}`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.lineWidth = 6; ctx.strokeStyle = "#ffffff";
     ctx.strokeText(f.text, f.x, f.y);
@@ -1763,8 +1861,8 @@ function drawPauseScreen() {
   ctx.fillText("잠깐 멈췄어요!", CONFIG.W / 2, 196);
   ctx.font = `20px ${FONT}`;
   ctx.fillStyle = "#d9ecf7";
-  ctx.fillText("다른 화면으로 나가면 게임이 자동으로 멈춰요.", CONFIG.W / 2, 246);
-  ctx.fillText(`지금까지 구출한 아기 오리: ${rescued}마리`, CONFIG.W / 2, 278);
+  ctx.fillText("일시정지 버튼·화면 나가기·새로 고침을 해도 여기서 이어져요.", CONFIG.W / 2, 246);
+  ctx.fillText(`점수 ${score}점 · 구출한 아기 오리 ${rescued}마리`, CONFIG.W / 2, 278);
   drawButton(BUTTONS.resume);
   ctx.font = `16px ${FONT}`;
   ctx.fillStyle = "#9ecbe8";
@@ -1990,9 +2088,16 @@ document.getElementById("board-close").addEventListener("click", hideBoardPanel)
  * [12] 메인 루프 (dt 기반 → 기기 성능과 무관하게 동일 속도)
  * ============================================================ */
 let last = performance.now();
+let pauseBtnShown = null; // 일시정지 버튼 표시 상태 캐시 (매 프레임 DOM 접근 방지)
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05); // 탭 전환 등 큰 dt 방지
   last = now;
+  const showPause = state === "playing";
+  if (pauseBtnShown !== showPause) {
+    pauseBtnShown = showPause;
+    // CSS 기본값이 none이므로 보일 때는 명시적으로 block을 지정해야 한다
+    pauseBtn.style.display = showPause ? "block" : "none";
+  }
   if (state === "playing") update(dt);
   duckSprite.update(dt); // 걷기 프레임 순환 (시작 화면 장식 오리도 함께 움직임)
   babySprite.update(dt); // 아기 오리 걷기 프레임 순환
@@ -2002,7 +2107,8 @@ function frame(now) {
 }
 
 initGame();          // 시작 화면 뒤 배경용 초기화
-state = "start";
+// 저장된 판이 있으면(새로 고침·창 닫기 등) '이어서 하기' 화면으로 복원
+state = tryRestoreGame() ? "paused" : "start";
 requestAnimationFrame(frame);
 </script>
 </body>
