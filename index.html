@@ -133,6 +133,11 @@
   .ovl ol li b { color: #ffe9a8; }
   .ovl .summary { background: #0c1e30; border-radius: 8px; padding: 8px 12px; font-size: 14px; line-height: 1.7; }
   .ovl .note { font-size: 12px; color: #7fa8c9; margin: 4px 0 8px; }
+  .ovl .help-list { margin: 6px 0 12px; padding-left: 20px; }
+  .ovl .help-list li { padding: 4px 0; font-size: 14px; line-height: 1.55; }
+  .ovl .help-list li b { color: #ffe9a8; }
+  .ovl .help-list li.warn-line { color: #ffcf9e; }
+  .ovl .help-list li.danger-line { color: #ffb3b3; }
 </style>
 </head>
 <body>
@@ -145,7 +150,7 @@
 <audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
 
 <!-- 하단 크레딧 -->
-<div id="credit">Created by gamtudyssam using AI 0.00091</div>
+<div id="credit">Created by gamtudyssam using AI 0.001</div>
 
 <!-- 랭킹 보기 버튼 (BGM 위젯 옆) -->
 <button id="board-open" type="button">🏆 랭킹</button>
@@ -175,6 +180,39 @@
       </div>
     </div>
     <div class="status" id="rank-status"></div>
+  </div>
+</div>
+
+<!-- 게임 방법 안내 -->
+<div id="help-panel" class="ovl hidden">
+  <div class="card">
+    <h3>📖 게임 방법</h3>
+    <ul class="help-list">
+      <li>PC: 방향키 / 패드·폰: 화면 구석의 방향 버튼 또는 스와이프</li>
+      <li>한 문제당 제한 시간은 <b>1분 30초</b>!</li>
+      <li>넓은 연못 속 <b>정답 상자</b>에 부딪히면 아기 오리 구출! (화살표가 위치 안내)</li>
+      <li>정답을 연속으로 맞히면 <b>콤보 보너스 점수</b>를 받아요!</li>
+      <li class="warn-line">틀린 상자에서는 늑대가 튀어나와요!</li>
+      <li class="warn-line">바위·늑대에 닿으면 아기 오리가 잡혀가거나 여러 마리가 도망가요!</li>
+      <li class="warn-line">실수할 때마다 늑대가 점점 빨라져요!</li>
+      <li class="danger-line">첫 문제를 틀리거나, 아기 오리와 대장 오리가 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!</li>
+    </ul>
+    <div class="btn-row">
+      <button class="ghost" id="help-close" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 나의 단원별 정답률 -->
+<div id="mystats-panel" class="ovl hidden">
+  <div class="card">
+    <h3>📊 나의 단원별 정답률</h3>
+    <div class="note">이 기기(브라우저)에 저장된 나의 누적 기록이에요.</div>
+    <div class="summary" id="mystats-list"></div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="ghost" id="mystats-reset" type="button">기록 초기화</button>
+      <button class="ghost" id="mystats-close" type="button">닫기</button>
+    </div>
   </div>
 </div>
 
@@ -394,7 +432,7 @@ const UNITS = [
     ["공공 기관의 이전을 계기로 지역의 성장을 돕는 미래형 도시는?", "신도시", "혁신 도시", "산업 도시", 1],
     ["개인이 고향이나 다른 지역에 기부하여 지역 발전을 돕는 제도는?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 0],
     ["지역의 자원과 문화 특성을 활용해 새로운 가치를 만드는 활동은?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 1],
-    ["지역 방문객을 늘리기 위해 관광객에게 발급하는 것은?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 2],
+    ["지역 방문객을 늘리기 위해 관광객에게 발급하는 증은?", "고향 사랑 기부제", "로컬 브랜딩", "디지털 관광 주민증", 2],
     ["국가 균형 발전을 위해 정부가 추진하는 정책으로 알맞은 것은?", "공공 기관의 지방 이전", "수도권 아파트 추가 건설", "서울 지역 대학 정원 확대", 0],
     ["수도권 인구를 분산하기 위한 근본적인 방법은?", "비수도권 활성화와 일자리 창출", "서울 아파트 증축", "지방 학교 폐쇄", 0],
     ["우리나라 기후 특징에 따라 여름에 주로 입는 옷은?", "털옷", "반소매 옷", "두꺼운 잠바", 1],
@@ -768,6 +806,9 @@ const BUTTONS = {
   restart: { x: CONFIG.W/2 - 110, y: 412, w: 220, h: 66, label: "다시 시작" },
   resume:  { x: CONFIG.W/2 - 110, y: 330, w: 220, h: 66, label: "이어서 하기" },
   reset:   { x: 628, y: 544, w: 156, h: 42, label: "기록 초기화", small: true },
+  // 게임 오버·일시정지 화면 전용: 게임 방법 / 나의 정답률 팝업 열기
+  help:    { x: CONFIG.W/2 - 220, y: 500, w: 210, h: 46, label: "📖 게임 방법", small: true },
+  mystats: { x: CONFIG.W/2 + 10,  y: 500, w: 210, h: 46, label: "📊 나의 정답률", small: true },
 };
 
 // 물 위 장식(잔물결·연잎) — 카메라가 움직이는 게 보이도록 월드에 고정 배치
@@ -918,10 +959,14 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (state === "gameover") {
     if (hitButton(BUTTONS.restart, p)) startGame();
+    else if (hitButton(BUTTONS.help, p)) openHelpPanel();       // 게임 방법 안내 창
+    else if (hitButton(BUTTONS.mystats, p)) openMyStatsPanel(); // 나의 단원별 정답률 창
     return;
   }
   if (state === "paused") {
     if (hitButton(BUTTONS.resume, p)) resumeGame();
+    else if (hitButton(BUTTONS.help, p)) openHelpPanel();
+    else if (hitButton(BUTTONS.mystats, p)) openMyStatsPanel();
     return;
   }
   // 가상 방향키를 눌렀으면 방향 전환 (스와이프 시작으로 취급하지 않음)
@@ -988,8 +1033,10 @@ function hitDpad(p) {
 }
 
 function startGame() {
-  hideRankPanel();  // 열려 있던 랭킹 창들은 닫고 시작
+  hideRankPanel();  // 열려 있던 창들은 모두 닫고 시작
   hideBoardPanel();
+  hideHelpPanel();
+  hideMyStatsPanel();
   initGame();
   state = "playing";
   playBgm(); // 버튼 클릭(사용자 제스처) 시점이라 브라우저 자동재생 차단에 걸리지 않는다
@@ -1848,23 +1895,31 @@ function drawStartScreen() {
   ctx.fillStyle = "#aad4ee";
   ctx.fillText("초등 5학년 1학기 사회", CONFIG.W / 2, 202);
 
-  ctx.font = `18px ${FONT}`;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText("PC: 방향키 / 패드·폰: 화면 구석의 방향 버튼 또는 스와이프 · 한 문제당 1분 30초!", CONFIG.W / 2, 244);
-  ctx.fillText("넓은 연못 속 정답 상자에 부딪히면 아기 오리 구출! (화살표가 위치 안내)", CONFIG.W / 2, 270);
-  ctx.fillStyle = "#ffcf9e";
-  ctx.fillText("틀린 상자에서는 늑대가 튀어나와요! 바위·늑대에 닿으면 아기 오리가 잡혀가거나 여러 마리가 도망가요!", CONFIG.W / 2, 296);
-  ctx.fillStyle = "#ffb3b3";
-  ctx.fillText("첫 문제를 틀리거나, 아기 오리와 대장 오리가 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!", CONFIG.W / 2, 322);
+  // 게임 설명 (긴 줄은 화면 폭에 맞게 글씨를 자동 축소해 좌우 잘림 방지)
+  const line = (text, y, color) => {
+    let s = 18;
+    ctx.font = `${s}px ${FONT}`;
+    while (s > 13 && ctx.measureText(text).width > CONFIG.W - 24) {
+      s--;
+      ctx.font = `${s}px ${FONT}`;
+    }
+    ctx.fillStyle = color;
+    ctx.fillText(text, CONFIG.W / 2, y);
+  };
+  line("PC: 방향키 / 패드·폰: 화면 구석의 방향 버튼 또는 스와이프 · 한 문제당 1분 30초!", 244, "#ffffff");
+  line("넓은 연못 속 정답 상자에 부딪히면 아기 오리 구출! (화살표가 위치 안내)", 268, "#ffffff");
+  line("틀린 상자에서는 늑대가 튀어나와요!", 292, "#ffcf9e");
+  line("바위·늑대에 닿으면 아기 오리가 잡혀가거나 여러 마리가 도망가요!", 316, "#ffcf9e");
+  line("첫 문제를 틀리거나, 아기 오리와 대장 오리가 부딪히거나, 오리 없이 늑대·바위에 닿으면 게임 오버!", 340, "#ffb3b3");
 
   // 단원별 누적 정답률 (localStorage에 저장된 기록)
   ctx.font = `bold 20px ${FONT}`;
   ctx.fillStyle = "#ffd21f";
-  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 362);
+  ctx.fillText("나의 단원별 정답률", CONFIG.W / 2, 376);
   ctx.font = `17px ${FONT}`;
   ctx.fillStyle = "#d9ecf7";
   for (let i = 0; i < UNITS.length; i++) {
-    ctx.fillText(statText(i), CONFIG.W / 2, 392 + i * 26);
+    ctx.fillText(statText(i), CONFIG.W / 2, 404 + i * 25);
   }
 
   drawButton(BUTTONS.start);
@@ -1885,6 +1940,8 @@ function drawPauseScreen() {
   ctx.font = `16px ${FONT}`;
   ctx.fillStyle = "#9ecbe8";
   ctx.fillText("(Enter나 스페이스 키를 눌러도 이어서 할 수 있어요)", CONFIG.W / 2, BUTTONS.resume.y + 100);
+  drawButton(BUTTONS.help);
+  drawButton(BUTTONS.mystats);
 }
 
 function drawGameOverScreen() {
@@ -1914,6 +1971,8 @@ function drawGameOverScreen() {
   }
 
   drawButton(BUTTONS.restart);
+  drawButton(BUTTONS.help);
+  drawButton(BUTTONS.mystats);
 }
 
 /* ============================================================
@@ -2101,6 +2160,42 @@ async function openBoardPanel(forceReload) {
 document.getElementById("board-open").addEventListener("click", () => openBoardPanel(false));
 document.getElementById("board-refresh").addEventListener("click", () => openBoardPanel(true));
 document.getElementById("board-close").addEventListener("click", hideBoardPanel);
+
+/* ---- 시작 화면 팝업: 게임 방법 / 나의 단원별 정답률 ---- */
+const helpPanel = document.getElementById("help-panel");
+const myStatsPanel = document.getElementById("mystats-panel");
+
+function openHelpPanel() { helpPanel.classList.remove("hidden"); }
+function hideHelpPanel() { helpPanel.classList.add("hidden"); }
+
+function openMyStatsPanel() {
+  renderMyStats();
+  myStatsPanel.classList.remove("hidden");
+}
+function hideMyStatsPanel() { myStatsPanel.classList.add("hidden"); }
+
+// 단원별 + 전체 누적 정답률을 패널에 채워 넣는다
+function renderMyStats() {
+  const lines = [];
+  let tc = 0, tt = 0;
+  for (let i = 0; i < UNITS.length; i++) {
+    const s = stats[String(i)] || { c: 0, t: 0 };
+    tc += s.c; tt += s.t;
+    lines.push(statText(i));
+  }
+  lines.push(tt > 0
+    ? `전체: 정답률 ${Math.round(tc / tt * 100)}% (${tc}/${tt})`
+    : "전체: 아직 기록 없음");
+  document.getElementById("mystats-list").innerHTML =
+    lines.map(escapeHtml).join("<br>");
+}
+
+document.getElementById("help-close").addEventListener("click", hideHelpPanel);
+document.getElementById("mystats-close").addEventListener("click", hideMyStatsPanel);
+document.getElementById("mystats-reset").addEventListener("click", () => {
+  resetStats();
+  renderMyStats(); // 지운 결과("기록 없음")를 바로 보여준다
+});
 
 /* ============================================================
  * [12] 메인 루프 (dt 기반 → 기기 성능과 무관하게 동일 속도)
